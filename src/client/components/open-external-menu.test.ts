@@ -1,0 +1,151 @@
+import { describe, expect, test } from "bun:test"
+import { getOpenAppItems } from "./open-external-menu"
+
+describe("getOpenAppItems", () => {
+  test("keeps the default editor first and custom hidden unless it is default", () => {
+    expect(getOpenAppItems({
+      editorPreset: "windsurf",
+      isMac: true,
+      includeFinder: true,
+      includeTerminal: false,
+      includePreview: true,
+    }).map((item) => item.value)).toEqual([
+      "editor:windsurf",
+      "editor:vscode",
+      "editor:cursor",
+      "editor:xcode",
+      "preview",
+      "finder",
+    ])
+  })
+
+  test("offers VS Code as the default editor option", () => {
+    expect(getOpenAppItems({
+      editorPreset: "vscode",
+      isMac: true,
+      includeFinder: true,
+    }).map((item) => item.value)).toEqual([
+      "editor:vscode",
+      "editor:cursor",
+      "editor:xcode",
+      "editor:windsurf",
+      "finder",
+    ])
+  })
+
+  test("includes custom only when custom is the default editor", () => {
+    expect(getOpenAppItems({
+      editorPreset: "custom",
+      isMac: true,
+      includeFinder: true,
+      includeTerminal: false,
+      includePreview: true,
+    }).map((item) => item.value)).toEqual([
+      "editor:custom",
+      "editor:vscode",
+      "editor:cursor",
+      "editor:xcode",
+      "editor:windsurf",
+      "preview",
+      "finder",
+    ])
+  })
+
+  test("hides Preview off macOS", () => {
+    expect(getOpenAppItems({
+      editorPreset: "cursor",
+      isMac: false,
+      includeFinder: true,
+      includeTerminal: false,
+      includePreview: true,
+    }).map((item) => item.value)).toEqual([
+      "editor:cursor",
+      "editor:vscode",
+      "editor:xcode",
+      "editor:windsurf",
+      "finder",
+    ])
+  })
+
+  test("puts Default App last when it is included", () => {
+    expect(getOpenAppItems({
+      editorPreset: "cursor",
+      isMac: true,
+      includeFinder: true,
+      includeTerminal: false,
+      includePreview: true,
+      includeDefault: true,
+    }).map((item) => item.value)).toEqual([
+      "editor:cursor",
+      "editor:vscode",
+      "editor:xcode",
+      "editor:windsurf",
+      "preview",
+      "finder",
+      "default",
+    ])
+  })
+
+  test("puts the forge last, named after its host", () => {
+    // Everything above it opens the code on disk; this one opens a web page,
+    // so it ends the list rather than sitting among the apps.
+    const items = getOpenAppItems({
+      editorPreset: "cursor",
+      isMac: true,
+      includeFinder: true,
+      repoUrl: "https://github.com/acme/widgets",
+    })
+
+    expect(items.at(-1)).toEqual({ value: "repo", label: "GitHub" })
+  })
+
+  test("names a self-hosted forge by host rather than calling it GitHub", () => {
+    expect(getOpenAppItems({
+      editorPreset: "cursor",
+      isMac: true,
+      repoUrl: "https://git.internal/acme/widgets",
+    }).at(-1)?.label).toBe("git.internal")
+  })
+
+  test("offers nothing for a project with no origin", () => {
+    // No disabled row: a project outside a repo simply has nowhere to go.
+    expect(getOpenAppItems({ editorPreset: "cursor", isMac: true })
+      .some((item) => item.value === "repo")).toBe(false)
+  })
+
+  test("the navbar menu ends with the forge too", () => {
+    expect(getOpenAppItems({
+      editorPreset: "cursor",
+      isMac: true,
+      includeFinder: true,
+      includeTerminal: true,
+      repoUrl: "https://github.com/acme/widgets",
+      menuKind: "navbar",
+    }).map((item) => item.value)).toEqual([
+      "editor:cursor",
+      "finder",
+      "terminal",
+      "editor:vscode",
+      "editor:xcode",
+      "editor:windsurf",
+      "repo",
+    ])
+  })
+
+  test("orders the navbar menu with Finder and Terminal after the default editor", () => {
+    expect(getOpenAppItems({
+      editorPreset: "cursor",
+      isMac: true,
+      includeFinder: true,
+      includeTerminal: true,
+      menuKind: "navbar",
+    }).map((item) => item.value)).toEqual([
+      "editor:cursor",
+      "finder",
+      "terminal",
+      "editor:vscode",
+      "editor:xcode",
+      "editor:windsurf",
+    ])
+  })
+})

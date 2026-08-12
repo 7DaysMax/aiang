@@ -1,0 +1,309 @@
+import type { ReactNode } from "react"
+import { Archive, Code, Copy, EyeOff, FolderOpen, Github, Pencil, PencilOff, RotateCcw, Split, SquarePen, Trash2, UserRoundPlus } from "lucide-react"
+import { getRepoUrlLabel } from "../../../../shared/git-url"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "../../ui/context-menu"
+
+/**
+ * "Open on GitHub" (or GitLab, or whatever host the remote names), sitting with
+ * the other Open-in items.
+ *
+ * Renders nothing without a URL — a project with no `origin`, or one whose
+ * remote is a bare path, has no page to open, and a permanently disabled row in
+ * every menu would cost more than it explains.
+ *
+ * Opens in *this* browser rather than through `system.openExternal`: that
+ * command opens things on the machine the project lives on, which is the wrong
+ * screen the moment that machine isn't the one you're sitting at.
+ */
+export function OpenRepoMenuItem({ repoUrl }: { repoUrl?: string }) {
+  if (!repoUrl) return null
+
+  return (
+    <ContextMenuItem
+      onSelect={(event) => {
+        event.preventDefault()
+        window.open(repoUrl, "_blank", "noopener,noreferrer")
+      }}
+    >
+      <Github className="h-3.5 w-3.5" />
+      <span className="text-xs font-medium">Open on {getRepoUrlLabel(repoUrl)}</span>
+    </ContextMenuItem>
+  )
+}
+
+export function ProjectSectionMenu({
+  editorLabel,
+  repoUrl,
+  onRename,
+  onCopyPath,
+  onShowArchived,
+  onOpenInFinder,
+  onOpenInEditor,
+  onHide,
+  children,
+}: {
+  editorLabel: string
+  /** The project's forge page; absent when it has no browsable origin. */
+  repoUrl?: string
+  onRename: () => void
+  onCopyPath: () => void
+  onShowArchived: () => void
+  onOpenInFinder: () => void
+  onOpenInEditor: () => void
+  onHide: () => void
+  children: ReactNode
+}) {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        {children}
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.preventDefault()
+            onRename()
+          }}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">重命名</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.stopPropagation()
+            onCopyPath()
+          }}
+        >
+          <Copy className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">复制路径</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.stopPropagation()
+            onShowArchived()
+          }}
+        >
+          <Archive className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">查看已归档</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.stopPropagation()
+            onOpenInFinder()
+          }}
+        >
+          <FolderOpen className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">在 Finder 中显示</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.stopPropagation()
+            onOpenInEditor()
+          }}
+        >
+          <Code className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">用 {editorLabel} 打开</span>
+        </ContextMenuItem>
+        <OpenRepoMenuItem repoUrl={repoUrl} />
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.stopPropagation()
+            onHide()
+          }}
+        >
+          <EyeOff className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">隐藏</span>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}
+
+export function ChatRowMenu({
+  canFork,
+  archived,
+  editorLabel,
+  repoUrl,
+  onNewChat,
+  onRename,
+  onShare,
+  onCopyPath,
+  onOpenInFinder,
+  onOpenInEditor,
+  onFork,
+  onArchive,
+  onRestore,
+  onClearDraft,
+  onDelete,
+  children,
+}: {
+  canFork?: boolean
+  /** Archived chats swap the Archive item for a leading Restore item. */
+  archived?: boolean
+  editorLabel: string
+  /** The project's forge page; absent when it has no browsable origin. */
+  repoUrl?: string
+  /** Starts a fresh chat in this chat's project. */
+  onNewChat: () => void
+  onRename: () => void
+  onShare: () => void
+  onCopyPath: () => void
+  onOpenInFinder: () => void
+  onOpenInEditor: () => void
+  onFork: () => void
+  onArchive: () => void
+  onRestore?: () => void
+  /**
+   * Throws away the chat's unsent draft. Absent when there is no draft, which
+   * is most rows — a section that only ever appears when there's something to
+   * clear beats a permanently greyed-out item in every menu.
+   */
+  onClearDraft?: () => void
+  onDelete: () => void
+  children: ReactNode
+}) {
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        {children}
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        {/* Draft leads: its own section, for something only this chat has and
+            only while it has it — so when it's there, it's what you opened the
+            menu for. */}
+        {onClearDraft ? (
+          <>
+            <ContextMenuItem
+              onSelect={(event) => {
+                event.preventDefault()
+                onClearDraft()
+              }}
+            >
+              <PencilOff className="h-3.5 w-3.5" />
+              <span className="text-xs font-medium">清除草稿</span>
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        ) : null}
+
+        {archived && onRestore ? (
+          <>
+            <ContextMenuItem
+              onSelect={(event) => {
+                event.preventDefault()
+                onRestore()
+              }}
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              <span className="text-xs font-medium">恢复</span>
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+          </>
+        ) : null}
+
+        {/* Chat actions */}
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.preventDefault()
+            onRename()
+          }}
+        >
+          <Pencil className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">重命名</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.preventDefault()
+            onShare()
+          }}
+        >
+          <UserRoundPlus className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">分享</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={!canFork}
+          onSelect={(event) => {
+            event.preventDefault()
+            if (!canFork) return
+            onFork()
+          }}
+        >
+          <Split className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">分支</span>
+        </ContextMenuItem>
+
+        <ContextMenuSeparator />
+
+        {/* Project actions */}
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.preventDefault()
+            onNewChat()
+          }}
+        >
+          <SquarePen className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">新建对话</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.stopPropagation()
+            onCopyPath()
+          }}
+        >
+          <Copy className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">复制路径</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.preventDefault()
+            onOpenInFinder()
+          }}
+        >
+          <FolderOpen className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">在 Finder 中打开</span>
+        </ContextMenuItem>
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.stopPropagation()
+            onOpenInEditor()
+          }}
+        >
+          <Code className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">用 {editorLabel} 打开</span>
+        </ContextMenuItem>
+        <OpenRepoMenuItem repoUrl={repoUrl} />
+
+        <ContextMenuSeparator />
+
+        {/* Chat lifecycle */}
+        {!archived ? (
+          <ContextMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              onArchive()
+            }}
+          >
+            <Archive className="h-3.5 w-3.5" />
+            <span className="text-xs font-medium">归档对话</span>
+          </ContextMenuItem>
+        ) : null}
+        <ContextMenuItem
+          onSelect={(event) => {
+            event.preventDefault()
+            onDelete()
+          }}
+          className="text-destructive dark:text-red-400 hover:bg-destructive/10 focus:bg-destructive/10 dark:hover:bg-red-500/20 dark:focus:bg-red-500/20"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+          <span className="text-xs font-medium">删除对话</span>
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
+  )
+}

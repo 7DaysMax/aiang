@@ -1,0 +1,325 @@
+import { useMemo, useState, type ComponentType, type ReactNode } from "react"
+import {
+  ArrowLeftRight,
+  ChevronRight,
+  CodeXml,
+  Folder,
+  Loader2,
+  Monitor,
+  Plus,
+  SquarePen,
+  Terminal,
+} from "lucide-react"
+import { APP_NAME, getCliInvocation, SDK_CLIENT_APP } from "../../shared/branding"
+import type { LocalProjectsSnapshot } from "../../shared/types"
+import type { SocketStatus } from "../app/socket"
+import { PageHeader } from "../app/PageHeader"
+import { getPathBasename } from "../lib/formatters"
+import { filterProjects, groupProjectsByRecency } from "../lib/project-groups"
+import { cn } from "../lib/utils"
+import { openCommandPalette } from "./command-palette/CommandPalette"
+import { Button } from "./ui/button"
+import { CopyButton } from "./ui/copy-button"
+import { Input } from "./ui/input"
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip"
+
+interface LocalDevProps {
+  connectionStatus: SocketStatus
+  ready: boolean
+  snapshot: LocalProjectsSnapshot | null
+  startingLocalPath: string | null
+  commandError: string | null
+  onOpenProject: (localPath: string) => Promise<void>
+  /** Setup entry card (renders itself only when onboarding is unfinished). */
+  providerCards?: ReactNode
+  /** Recent GitHub repos section (renders itself only when `gh` is signed in). */
+  githubSection?: ReactNode
+}
+
+function CodeBlock({ children }: { children: string }) {
+  return (
+    <div className="grid grid-cols-[1fr_auto] items-center group bg-background border border-border text-foreground rounded-xl p-1.5 pl-3 font-mono text-sm">
+      <pre className="inline-flex items-center gap-2 overflow-x-auto">
+        <ChevronRight className="inline h-4 w-4 opacity-40" />
+        <code>{children}</code>
+      </pre>
+      <CopyButton
+        text={children}
+        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+        copiedHoverReset={false}
+      />
+    </div>
+  )
+}
+
+function InfoCard({ children }: { children: ReactNode }) {
+  return <div className="bg-card border border-border rounded-2xl p-4">{children}</div>
+}
+
+function SectionHeader({ children }: { children: ReactNode }) {
+  return (
+    <h2 className="text-[13px] font-medium text-muted-foreground uppercase tracking-wider mb-3">
+      {children}
+    </h2>
+  )
+}
+
+function HowItWorksItem({
+  icon: Icon,
+  title,
+  subtitle,
+  iconClassName,
+}: {
+  icon: ComponentType<{ className?: string }>
+  title: string
+  subtitle: string
+  iconClassName?: string
+}) {
+  return (
+    <div className="flex flex-col items-center gap-0">
+      <div className="p-3 mb-2 rounded-xl bg-background border border-border">
+        <Icon className={iconClassName || "h-8 w-8 text-muted-foreground"} />
+      </div>
+      <span className="text-sm font-medium">{title}</span>
+      <span className="text-xs text-muted-foreground">{subtitle}</span>
+    </div>
+  )
+}
+
+function HowItWorksConnector() {
+  return <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
+}
+
+function Step({
+  number,
+  title,
+  children,
+}: {
+  number: number
+  title: string
+  children: ReactNode
+}) {
+  return (
+    <div className="flex gap-4">
+      <div className="flex-1 min-w-0">
+        <div className="grid grid-cols-[auto_1fr] items-baseline gap-3">
+          <div className="flex-shrink-0 flex items-center justify-center font-medium text-logo">{number}.</div>
+          <h3 className="font-medium text-foreground mb-2">{title}</h3>
+        </div>
+        <div className="text-muted-foreground text-sm space-y-3">{children}</div>
+      </div>
+    </div>
+  )
+}
+
+function ProjectCard({
+  localPath,
+  loading,
+  onClick,
+}: {
+  localPath: string
+  loading: boolean
+  onClick: () => void
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          className={cn(
+            "border border-border hover:border-primary/30 group rounded-lg bg-card px-4 py-3 flex items-center gap-3 w-full text-left hover:bg-muted/50 transition-colors",
+            loading && "opacity-50 cursor-not-allowed"
+          )}
+          disabled={loading}
+          onClick={onClick}
+        >
+          <Folder className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+          <span className="font-medium text-foreground truncate flex-1">
+            {getPathBasename(localPath)}
+          </span>
+          {loading ? (
+            <Loader2 className="h-4 w-4 text-muted-foreground group-hover:text-primary animate-spin flex-shrink-0" />
+          ) : (
+            <SquarePen className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+          )}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>
+        <p>{localPath}</p>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+export function LocalDev({
+  connectionStatus,
+  ready,
+  snapshot,
+  startingLocalPath,
+  commandError,
+  onOpenProject,
+  providerCards,
+  githubSection,
+}: LocalDevProps) {
+  const projects = useMemo(() => snapshot?.projects ?? [], [snapshot?.projects])
+  const [projectSearch, setProjectSearch] = useState("")
+  const visibleProjects = useMemo(() => filterProjects(projects, projectSearch), [projectSearch, projects])
+  const projectGroups = useMemo(() => groupProjectsByRecency(visibleProjects), [visibleProjects])
+  const isConnecting = connectionStatus === "connecting" || !ready
+  const isConnected = connectionStatus === "connected" && ready
+
+  return (
+    <div className="flex-1 flex flex-col min-w-0 bg-background overflow-y-auto">
+      {!isConnected ? (
+        <>
+          <PageHeader
+            narrow
+            icon={CodeXml}
+            title={isConnecting ? `Connecting ${APP_NAME}` : `Connect ${APP_NAME}`}
+            subtitle={isConnecting
+              ? `${APP_NAME} is starting up and loading your local projects.`
+              : `Run ${APP_NAME} directly on your machine with full access to your local files and agent project history.`}
+          />
+          <div className="max-w-2xl w-full mx-auto pb-12 px-6">
+            <SectionHeader>Status</SectionHeader>
+            <div className="mb-8">
+              <InfoCard>
+                <div className="flex items-center gap-3">
+                  <Loader2 className="h-4 w-4 text-muted-foreground animate-spin" />
+                  <span className="text-sm text-muted-foreground">
+                    {isConnecting ? (
+                      `Connecting to your local ${APP_NAME} server...`
+                    ) : (
+                      <>
+                        Not connected. Run <code className="bg-background border border-border rounded-md mx-0.5 p-1 font-mono text-xs text-foreground">{getCliInvocation()}</code> from any terminal on this machine.
+                      </>
+                    )}
+                  </span>
+                </div>
+              </InfoCard>
+            </div>
+
+            {!isConnecting ? (
+              <div className="mb-10">
+              <SectionHeader>工作原理</SectionHeader>
+              <InfoCard>
+                <div className="flex items-center justify-around gap-6 py-4 px-2">
+                  <HowItWorksItem icon={Terminal} title={`${APP_NAME} CLI`} subtitle="在你的机器上" />
+                  <HowItWorksConnector />
+                  <HowItWorksItem icon={Monitor} title={`${APP_NAME} 服务端`} subtitle="本地 WebSocket" />
+                  <HowItWorksConnector />
+                  <HowItWorksItem icon={CodeXml} title={`${APP_NAME} 界面`} subtitle="项目对话" />
+                </div>
+              </InfoCard>
+              </div>
+            ) : null}
+
+            {!isConnecting ? (
+              <div className="mb-10">
+              <SectionHeader>设置</SectionHeader>
+              <InfoCard>
+                <div className="space-y-4">
+                  <Step number={1} title={`启动 ${APP_NAME}`}>
+                    <p>在终端中运行以下命令：</p>
+                    <CodeBlock>{getCliInvocation()}</CodeBlock>
+                  </Step>
+
+                  <Step number={2} title="打开本地界面">
+                    <p>{APP_NAME} 在本地提供应用服务，并在应用风格浏览器窗口中打开本地项目页。</p>
+                    <CodeBlock>http://localhost:3210/local</CodeBlock>
+                  </Step>
+
+                  <div className="mt-8">
+                    <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-4">说明</h3>
+                    <div className="space-y-3 text-sm">
+                      <div className="flex gap-4">
+                        <code className="font-mono text-foreground whitespace-nowrap">{getCliInvocation("").trim()}</code>
+                        <span className="text-muted-foreground">在当前目录启动</span>
+                      </div>
+                      <div className="flex gap-4">
+                        <code className="font-mono text-foreground whitespace-nowrap">{getCliInvocation("--no-open")}</code>
+                        <span className="text-muted-foreground">启动服务但不打开浏览器</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </InfoCard>
+              </div>
+            ) : null}
+          </div>
+        </>
+      ) : (
+        <>
+          <PageHeader
+            title={snapshot?.machine.displayName ?? "本地项目"}
+            subtitle={`${APP_NAME} 已连接，选择下方项目即可开始。`}
+          />
+
+          <div className="w-full px-6 mb-10">
+            {providerCards}
+            {projects.length > 0 ? (
+              <>
+                <div className="mb-8 flex items-center gap-2">
+                  <Input
+                    type="search"
+                    aria-label="搜索项目"
+                    placeholder="搜索项目…"
+                    value={projectSearch}
+                    onChange={(event) => setProjectSearch(event.target.value)}
+                    className="min-w-0 flex-1"
+                  />
+                  <Button
+                    variant="default"
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => openCommandPalette("add-project")}
+                  >
+                    <Plus className="size-3.5" data-icon="inline-start" />
+                    Project
+                  </Button>
+                </div>
+                <div className="flex flex-col gap-8">
+                  {projectGroups.length > 0 ? projectGroups.map((group) => (
+                    <section key={group.key} aria-labelledby={`project-group-${group.key}`}>
+                      <h3
+                        id={`project-group-${group.key}`}
+                        className="mb-3 text-[13px] font-medium uppercase tracking-wider text-muted-foreground"
+                      >
+                        {group.title}
+                      </h3>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-4 3xl:grid-cols-5">
+                        {group.projects.map((project) => (
+                          <ProjectCard
+                            key={project.localPath}
+                            localPath={project.localPath}
+                            loading={startingLocalPath === project.localPath}
+                            onClick={() => {
+                              void onOpenProject(project.localPath)
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  )) : (
+                    <InfoCard>
+                      <p className="text-sm text-muted-foreground">No projects match your search.</p>
+                    </InfoCard>
+                  )}
+                </div>
+              </>
+            ) : null}
+            {githubSection}
+            {commandError ? (
+              <div className="text-sm text-destructive border border-destructive/20 bg-destructive/5 rounded-xl px-4 py-3 mt-4">
+                {commandError}
+              </div>
+            ) : null}
+          </div>
+        </>
+      )}
+
+      <div className="py-4 text-center">
+        <span className="text-xs text-muted-foreground/50">v{SDK_CLIENT_APP.split("/")[1]}</span>
+      </div>
+    </div>
+  )
+}

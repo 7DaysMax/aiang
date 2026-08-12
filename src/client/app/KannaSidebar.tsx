@@ -1,0 +1,922 @@
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { Activity, Flower, House, Loader2, PanelLeft, Search, X, Menu, Plus, Settings, SquarePen, Terminal } from "lucide-react"
+import { useLocation, useNavigate } from "react-router-dom"
+import { Button } from "../components/ui/button"
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog"
+import { buildChatJumpLocationState, type ChatJumpRole } from "../lib/chat-navigation"
+import { formatSidebarAgeLabel } from "../lib/formatters"
+import { getSidebarChatTimestamp } from "../lib/sidebarChats"
+import { getThreadDetailLabel } from "../lib/thread-detail-label"
+import { flattenSidebarThreads } from "../lib/thread-sections"
+import { cn, normalizeChatId } from "../lib/utils"
+import { LocalProjectsSection } from "../components/chat-ui/sidebar/LocalProjectsSection"
+import { projectActivity } from "./kannaStateHelpers"
+import { ThreadRow } from "../components/chat-ui/sidebar/ThreadRow"
+import { ThreadSections } from "../components/chat-ui/sidebar/ThreadSections"
+import { Kbd } from "../components/ui/kbd"
+import { SidebarViewSwitcher, type SidebarView } from "../components/chat-ui/sidebar/SidebarViewSwitcher"
+import { MachineSwitcher } from "./MachineSwitcher"
+import { getResolvedKeybindings } from "../lib/keybindings"
+import { useIsStandalone } from "../hooks/useIsStandalone"
+import type { ChatTouchedFilesResult, KeybindingsSnapshot, SidebarData, SidebarChatRow, UpdateSnapshot } from "../../shared/types"
+import type { SocketStatus } from "./socket"
+import {
+  getSidebarJumpTargetIndex,
+  getSidebarNumberJumpHint,
+  getVisibleSidebarChats,
+  isSidebarModifierShortcut,
+  shouldShowSidebarNumberJumpHints,
+} from "./sidebarNumberJump"
+import { SIDEBAR_VIEW_STORAGE_KEY, SIDEBAR_WIDTH_STORAGE_KEY } from "../lib/storageKeys"
+import { useAppSettingsStore } from "../stores/appSettingsStore"
+import { OPEN_COMMAND_PALETTE_EVENT, openCommandPalette } from "../components/command-palette/CommandPalette"
+import { APP_VERSION } from "../../shared/branding"
+import { useDeepSeekStatusStore } from "../stores/deepSeekStatusStore"
+import { STATUS_COLORS, STATUS_LABELS } from "./settings/StatusSection"
+
+export const DEFAULT_SIDEBAR_WIDTH = 275
+export const MIN_SIDEBAR_WIDTH = 220
+export const MAX_SIDEBAR_WIDTH = 520
+
+export function clampSidebarWidth(width: number) {
+  if (!Number.isFinite(width)) return DEFAULT_SIDEBAR_WIDTH
+  return Math.min(MAX_SIDEBAR_WIDTH, Math.max(MIN_SIDEBAR_WIDTH, Math.round(width)))
+}
+
+function readStoredSidebarWidth() {
+  if (typeof window === "undefined") return DEFAULT_SIDEBAR_WIDTH
+  const stored = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
+  return stored ? clampSidebarWidth(Number(stored)) : DEFAULT_SIDEBAR_WIDTH
+}
+
+function persistSidebarWidth(width: number) {
+  if (typeof window === "undefined") return
+  window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clampSidebarWidth(width)))
+}
+
+function readStoredSidebarView(): SidebarView {
+  if (typeof window === "undefined") return "recents"
+  return window.localStorage.getItem(SIDEBAR_VIEW_STORAGE_KEY) === "projects" ? "projects" : "recents"
+}
+
+interface KannaSidebarProps {
+  data: SidebarData
+  activeChatId: string | null
+  connectionStatus: SocketStatus
+  ready: boolean
+  open: boolean
+  collapsed: boolean
+  showMobileOpenButton: boolean
+  onOpen: () => void
+  onClose: () => void
+  onCollapse: () => void
+  onExpand: () => void
+  onCreateChat: (projectId: string) => void
+  onForkChat: (chat: SidebarChatRow) => void
+  currentProjectId: string | null
+  keybindings: KeybindingsSnapshot | null
+  onRenameChat: (chat: SidebarChatRow) => void
+  onShareChat: (chatId: string) => void
+  onArchiveChat: (chat: SidebarChatRow) => void
+  onOpenArchivedChat: (chatId: string) => void
+  onRestoreChat: (chatId: string) => void
+  onDeleteChat: (chat: SidebarChatRow) => void
+  onCopyPath: (localPath: string) => void
+  onOpenExternalPath: (action: "open_finder" | "open_editor", localPath: string) => void
+  /** Fetches what a chat changed, for the hover card's file list. */
+  onLoadTouchedFiles?: (chatId: string) => Promise<ChatTouchedFilesResult>
+  /** Prompts to `git init` a chat's project — the hover card's "Setup Git". */
+  onSetupGit: (chatId: string) => void
+  onRenameProject: (projectId: string, sidebarTitle: string | undefined, realTitle: string) => void
+  onHideProject: (projectId: string) => void
+  onReorderProjectGroups: (projectIds: string[]) => void
+  editorLabel: string
+  updateSnapshot: UpdateSnapshot | null
+  onOpenChangelog: () => void
+}
+
+function KannaSidebarImpl({
+  data,
+  activeChatId,
+  connectionStatus,
+  ready,
+  open,
+  collapsed,
+  showMobileOpenButton,
+  onOpen,
+  onClose,
+  onCollapse,
+  onExpand,
+  onCreateChat,
+  onForkChat,
+  currentProjectId,
+  keybindings,
+  onRenameChat,
+  onShareChat,
+  onArchiveChat,
+  onOpenArchivedChat,
+  onRestoreChat,
+  onDeleteChat,
+  onCopyPath,
+  onOpenExternalPath,
+  onLoadTouchedFiles,
+  onSetupGit,
+  onRenameProject,
+  onHideProject,
+  onReorderProjectGroups,
+  editorLabel,
+  updateSnapshot,
+  onOpenChangelog,
+}: KannaSidebarProps) {
+  const location = useLocation()
+  const navigate = useNavigate()
+  const isStandalone = useIsStandalone()
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const resizeStartRef = useRef<{ pointerX: number; width: number } | null>(null)
+  const initializedCollapsedGroupKeysRef = useRef<Set<string>>(new Set())
+  const [collapsedSections, setCollapsedSections] = useState<Set<string>>(new Set())
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  const [showNumberJumpHints, setShowNumberJumpHints] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false)
+  const [archivedProjectId, setArchivedProjectId] = useState<string | null>(null)
+  const [sidebarView, setSidebarView] = useState<SidebarView>(readStoredSidebarView)
+
+  const changeSidebarView = useCallback((view: SidebarView) => {
+    setSidebarView(view)
+    if (typeof window !== "undefined") window.localStorage.setItem(SIDEBAR_VIEW_STORAGE_KEY, view)
+  }, [])
+  const resolvedKeybindings = useMemo(() => getResolvedKeybindings(keybindings), [keybindings])
+  const visibleChats = useMemo(
+    () => getVisibleSidebarChats(data.projectGroups, collapsedSections, expandedGroups),
+    [collapsedSections, data.projectGroups, expandedGroups]
+  )
+  const visibleChatsRef = useRef(visibleChats)
+  const visibleIndexByChatId = useMemo(
+    () => new Map(visibleChats.map((entry) => [entry.chat.chatId, entry.visibleIndex])),
+    [visibleChats]
+  )
+
+  const projectIdByPath = useMemo(
+    () => new Map(data.projectGroups.map((group) => [group.localPath, group.groupKey])),
+    [data.projectGroups]
+  )
+
+  // The Projects tab renders the same `ThreadRow` as the Chats tab, which wants
+  // a SidebarThread. Reuse the flattener rather than synthesising one per row so
+  // projectId/projectTitle/archived stay correct in one place.
+  const threadByChatId = useMemo(
+    () => new Map(flattenSidebarThreads(data).map((thread) => [thread.chatId, thread])),
+    [data]
+  )
+
+  const activeVisibleCount = visibleChats.length
+  const archivedProject = useMemo(
+    () => data.projectGroups.find((group) => group.groupKey === archivedProjectId) ?? null,
+    [archivedProjectId, data.projectGroups]
+  )
+
+  useEffect(() => {
+    visibleChatsRef.current = visibleChats
+  }, [visibleChats])
+
+  useEffect(() => {
+    setCollapsedSections((previous) => {
+      const next = new Set<string>()
+      const projectKeys = new Set(data.projectGroups.map((group) => group.groupKey))
+      const initializedKeys = initializedCollapsedGroupKeysRef.current
+
+      for (const key of previous) {
+        if (projectKeys.has(key)) {
+          next.add(key)
+        }
+      }
+
+      initializedCollapsedGroupKeysRef.current = new Set(
+        [...initializedKeys].filter((key) => projectKeys.has(key))
+      )
+
+      for (const group of data.projectGroups) {
+        if (initializedCollapsedGroupKeysRef.current.has(group.groupKey)) continue
+        initializedCollapsedGroupKeysRef.current.add(group.groupKey)
+        if (group.defaultCollapsed) {
+          next.add(group.groupKey)
+        }
+      }
+
+      if (next.size === previous.size && [...next].every((key) => previous.has(key))) {
+        return previous
+      }
+
+      return next
+    })
+  }, [data.projectGroups])
+
+  const toggleSection = useCallback((key: string) => {
+    setCollapsedSections((previous) => {
+      const next = new Set(previous)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }, [])
+
+  const toggleExpandedGroup = useCallback((key: string) => {
+    setExpandedGroups((previous) => {
+      const next = new Set(previous)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }, [])
+
+  const selectChat = useCallback((chatId: string) => {
+    navigate(`/chat/${chatId}`)
+    onClose()
+  }, [navigate, onClose])
+
+  // Same navigation with a landing spot attached. Always navigates, even to the
+  // chat already open: the pathname wouldn't change, but the request id does,
+  // which is what moves the viewport a second time.
+  const selectChatMessage = useCallback((chatId: string, role: ChatJumpRole) => {
+    navigate(`/chat/${chatId}`, { state: buildChatJumpLocationState(role) })
+    onClose()
+  }, [navigate, onClose])
+
+  const renderChatRow = useCallback((chat: SidebarChatRow) => {
+    const thread = threadByChatId.get(chat.chatId)
+    if (!thread) return null
+    const visibleIndex = visibleIndexByChatId.get(chat.chatId)
+    const shortcutHint = visibleIndex ? getSidebarNumberJumpHint(resolvedKeybindings, visibleIndex) : null
+
+    return (
+      <ThreadRow
+        key={chat._id}
+        thread={thread}
+        isActive={activeChatId === normalizeChatId(chat.chatId)}
+        editorLabel={editorLabel}
+        // Project-scoped: rows already sit under their project header, so the
+        // slot shows the chat's age — swapped for a keycap while the
+        // number-jump modifier is held.
+        detailLabel={showNumberJumpHints && shortcutHint ? (
+          <Kbd className="h-4 min-w-4 rounded-sm border-border/50 bg-transparent px-1 text-[10px]">
+            {shortcutHint}
+          </Kbd>
+        ) : getThreadDetailLabel(thread, "project-scoped", nowMs)}
+        onSelect={selectChat}
+        onSelectMessage={selectChatMessage}
+        onSetupGit={onSetupGit}
+        onLoadTouchedFiles={onLoadTouchedFiles}
+        onCreateChat={onCreateChat}
+        onRenameChat={onRenameChat}
+        onShareChat={onShareChat}
+        onCopyPath={onCopyPath}
+        onOpenExternalPath={onOpenExternalPath}
+        onForkChat={onForkChat}
+        onArchiveChat={onArchiveChat}
+        onRestoreChat={onRestoreChat}
+        onDeleteChat={onDeleteChat}
+      />
+    )
+  }, [activeChatId, editorLabel, nowMs, onArchiveChat, onCopyPath, onCreateChat, onDeleteChat, onForkChat, onLoadTouchedFiles, onOpenExternalPath, onRenameChat, onRestoreChat, onSetupGit, onShareChat, resolvedKeybindings, selectChat, selectChatMessage, showNumberJumpHints, threadByChatId, visibleIndexByChatId])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      setNowMs(Date.now())
+    }, 30_000)
+
+    return () => window.clearInterval(intervalId)
+  }, [])
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      setShowNumberJumpHints(shouldShowSidebarNumberJumpHints(resolvedKeybindings, event))
+
+      if (isSidebarModifierShortcut(resolvedKeybindings, "createChatInCurrentProject", event)) {
+        if (!currentProjectId) {
+          return
+        }
+
+        event.preventDefault()
+        onCreateChat(currentProjectId)
+        return
+      }
+
+      if (isSidebarModifierShortcut(resolvedKeybindings, "openAddProject", event)) {
+        event.preventDefault()
+        onClose()
+        openCommandPalette("add-project")
+        return
+      }
+
+      const targetIndex = getSidebarJumpTargetIndex(resolvedKeybindings, event)
+      if (targetIndex === null) {
+        return
+      }
+
+      const targetChat = visibleChatsRef.current[targetIndex - 1]?.chat
+      if (!targetChat) {
+        return
+      }
+
+      event.preventDefault()
+      navigate(`/chat/${targetChat.chatId}`)
+      onClose()
+    }
+
+    function handleKeyUp(event: KeyboardEvent) {
+      setShowNumberJumpHints(shouldShowSidebarNumberJumpHints(resolvedKeybindings, event))
+    }
+
+    function clearHints() {
+      setShowNumberJumpHints(false)
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    window.addEventListener("keyup", handleKeyUp)
+    window.addEventListener("blur", clearHints)
+
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown)
+      window.removeEventListener("keyup", handleKeyUp)
+      window.removeEventListener("blur", clearHints)
+    }
+  }, [currentProjectId, navigate, onClose, onCreateChat, resolvedKeybindings])
+
+  useEffect(() => {
+    if (!activeChatId || !scrollContainerRef.current) return
+
+    requestAnimationFrame(() => {
+      const container = scrollContainerRef.current
+      const activeElement = container?.querySelector(`[data-chat-id="${activeChatId}"]`) as HTMLElement | null
+      if (!activeElement || !container) return
+
+      const elementRect = activeElement.getBoundingClientRect()
+      const containerRect = container.getBoundingClientRect()
+
+      if (elementRect.top < containerRect.top + 38) {
+        const relativeTop = elementRect.top - containerRect.top + container.scrollTop
+        container.scrollTo({ top: relativeTop - 38, behavior: "smooth" })
+      } else if (elementRect.bottom > containerRect.bottom) {
+        const elementCenter = elementRect.top + elementRect.height / 2 - containerRect.top + container.scrollTop
+        const containerCenter = container.clientHeight / 2
+        container.scrollTo({ top: elementCenter - containerCenter, behavior: "smooth" })
+      }
+    })
+  }, [activeChatId])
+
+  useEffect(() => {
+    if (!isResizingSidebar) return
+
+    const previousCursor = document.body.style.cursor
+    const previousUserSelect = document.body.style.userSelect
+    document.body.style.cursor = "col-resize"
+    document.body.style.userSelect = "none"
+
+    function handlePointerMove(event: PointerEvent) {
+      const resizeStart = resizeStartRef.current
+      if (!resizeStart) return
+      setSidebarWidth(clampSidebarWidth(resizeStart.width + event.clientX - resizeStart.pointerX))
+    }
+
+    function handlePointerUp() {
+      setIsResizingSidebar(false)
+      resizeStartRef.current = null
+      setSidebarWidth((current) => {
+        const next = clampSidebarWidth(current)
+        persistSidebarWidth(next)
+        return next
+      })
+    }
+
+    window.addEventListener("pointermove", handlePointerMove)
+    window.addEventListener("pointerup", handlePointerUp, { once: true })
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove)
+      window.removeEventListener("pointerup", handlePointerUp)
+      document.body.style.cursor = previousCursor
+      document.body.style.userSelect = previousUserSelect
+    }
+  }, [isResizingSidebar])
+
+  const hasVisibleChats = activeVisibleCount > 0
+  const isLocalProjectsActive = location.pathname === "/"
+  const newSidebarEnabled = useAppSettingsStore((s) => s.settings?.newSidebarEnabled !== false)
+  const devbox = useAppSettingsStore((s) => s.settings?.devbox === true)
+  const newSidebarProjectsView = newSidebarEnabled && sidebarView === "projects"
+
+  // New Sidebar's Projects tab hides projects with no chats and sorts by
+  // recent activity — but a project seen non-empty during the current tab
+  // visit sticks around at its last position even after its last chat is
+  // archived (activity would otherwise drop to 0 and yank it to the bottom).
+  // The sticky memory resets when you leave the Projects tab.
+  const stickyProjectActivityRef = useRef<Map<string, number>>(new Map())
+  useEffect(() => {
+    if (!newSidebarProjectsView) stickyProjectActivityRef.current = new Map()
+  }, [newSidebarProjectsView])
+  const visibleProjectGroups = useMemo(() => {
+    if (!newSidebarProjectsView) return data.projectGroups
+    const sticky = stickyProjectActivityRef.current
+    const visible = data.projectGroups.filter((group) => {
+      if (group.chats.length > 0) {
+        sticky.set(group.groupKey, projectActivity(group))
+        return true
+      }
+      return sticky.has(group.groupKey)
+    })
+    // Sticky (just-emptied) groups sort by their remembered activity.
+    return visible.sort((left, right) =>
+      (sticky.get(right.groupKey) ?? projectActivity(right)) - (sticky.get(left.groupKey) ?? projectActivity(left)))
+  }, [data.projectGroups, newSidebarProjectsView])
+
+  const isSettingsActive = location.pathname.startsWith("/settings")
+  const isStatusPageActive = location.pathname === "/settings/status"
+  const isUtilityPageActive = isLocalProjectsActive || isSettingsActive
+  const isConnecting = connectionStatus === "connecting" || !ready
+  const statusLabel = isConnecting ? "连接中" : connectionStatus === "connected" ? "已连接" : "未连接"
+  const statusDotClass = connectionStatus === "connected" ? "bg-emerald-500" : "bg-amber-500"
+  const serviceStatus = useDeepSeekStatusStore((s) => s.status)
+  const serviceStatusFailed = useDeepSeekStatusStore((s) => s.failed)
+  const refreshDeepSeekStatus = useDeepSeekStatusStore((s) => s.refresh)
+  const serviceStatusLabel = serviceStatus?.ok
+    ? (STATUS_LABELS[serviceStatus.overallStatus] ?? "未知")
+    : serviceStatusFailed
+      ? "获取失败"
+      : "加载中…"
+  const serviceStatusDot = serviceStatus?.ok
+    ? (STATUS_COLORS[serviceStatus.overallStatus] ?? "bg-muted-foreground/40")
+    : "bg-muted-foreground/40"
+  const serviceStatusLoadedRef = useRef(false)
+  useEffect(() => {
+    if (!serviceStatusLoadedRef.current) {
+      serviceStatusLoadedRef.current = true
+      void refreshDeepSeekStatus()
+    }
+  }, [refreshDeepSeekStatus])
+  // 首次拉取失败时自动重试，直到拿到真实状态。
+  useEffect(() => {
+    if (serviceStatusFailed && !serviceStatus?.ok && ready) {
+      const timer = window.setTimeout(() => {
+        void refreshDeepSeekStatus()
+      }, 15_000)
+      return () => window.clearTimeout(timer)
+    }
+  }, [serviceStatusFailed, serviceStatus, ready, refreshDeepSeekStatus])
+  const showUpdateButton = updateSnapshot?.updateAvailable === true
+  const showDevBadge = updateSnapshot
+    ? updateSnapshot.latestVersion === `${updateSnapshot.currentVersion}-dev`
+    : false
+  const isUpdating = updateSnapshot?.status === "updating" || updateSnapshot?.status === "restart_pending"
+
+  return (
+    <>
+      {!open && showMobileOpenButton && (
+        <Button
+          variant="ghost"
+          size="icon"
+          className="fixed top-3 left-3 z-50 md:hidden"
+          onClick={onOpen}
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
+      )}
+
+      {collapsed && isUtilityPageActive && (
+        <div className="hidden md:flex fixed left-0 top-0 h-full z-40 items-start pt-4 pl-5 border-l border-border/0">
+          <div className="flex items-center gap-1">
+            <Flower className="size-6 text-logo" />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onExpand}
+              title="展开侧边栏"
+            >
+              <PanelLeft className="h-5 w-5" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <div
+        data-sidebar="open"
+        className={cn(
+          "fixed inset-0 z-50 bg-background dark:bg-card flex flex-col h-[100dvh] select-none",
+          "md:relative md:inset-auto md:w-[var(--sidebar-width)] md:mr-0 md:h-auto md:my-2 md:ml-2 md:border md:border-border md:rounded-2xl",
+          open ? "flex" : "hidden md:flex",
+          collapsed && "md:hidden"
+        )}
+        style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}
+      >
+        <div className="px-2.5 h-[64px] md:h-auto md:py-1 border-b grid grid-cols-[84px_minmax(0,1fr)_84px] items-center md:pl-3 md:pr-1 md:flex md:justify-between">
+          <div className="md:hidden grid grid-cols-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="w-[42px] rounded-lg hover:!border-border/0 !border-0"
+              onClick={onClose}
+              title="关闭侧边栏"
+            >
+              <X className="h-5 w-5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "w-[42px] rounded-lg hover:!border-border/0 !border-0 -translate-x-[1px]",
+                isSettingsActive ? "text-foreground" : "text-muted-foreground"
+              )}
+              onClick={() => {
+                navigate("/settings/general")
+                onClose()
+              }}
+              title="设置"
+            >
+              <Settings className="h-5 w-5" />
+            </Button>
+          </div>
+          <div className="flex items-center justify-self-center gap-2 md:justify-self-auto">
+            <button
+              type="button"
+              onClick={onCollapse}
+              title="收起侧边栏"
+              className="hidden md:flex group/sidebar-collapse relative items-center justify-center h-5 w-5 sm:h-6 sm:w-6"
+            >
+              <Flower className="absolute inset-0.5 h-4 w-4 sm:h-5 sm:w-5 text-logo transition-all duration-200 ease-out opacity-100 scale-100 group-hover/sidebar-collapse:opacity-0 group-hover/sidebar-collapse:scale-0" />
+              <PanelLeft className="absolute inset-0 h-4 w-4 sm:h-6 sm:w-6 text-slate-500 dark:text-slate-400 transition-all duration-200 ease-out opacity-0 scale-0 group-hover/sidebar-collapse:opacity-100 group-hover/sidebar-collapse:scale-80 hover:opacity-50" />
+            </button>
+            <Flower className="h-5 w-5 sm:h-6 sm:w-6 text-logo md:hidden" />
+            <span className="font-logo text-base sm:text-md text-slate-600 dark:text-slate-100">Youmi</span>
+            <span className="mt-0.5 hidden text-[10px] leading-none text-muted-foreground/60 md:inline">v{APP_VERSION}</span>
+          </div>
+          <div className="flex items-center justify-self-end md:justify-self-auto">
+            {!newSidebarEnabled ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-10 rounded-lg hover:!border-border/0 md:hidden"
+                onClick={() => window.dispatchEvent(new CustomEvent(OPEN_COMMAND_PALETTE_EVENT))}
+                title="搜索"
+              >
+                <Search className="h-5 w-5" />
+              </Button>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={newSidebarEnabled
+                ? () => openCommandPalette()
+                : () => {
+                  navigate("/")
+                  onClose()
+                }}
+              className="size-10 rounded-lg hover:!border-border/0 md:hidden"
+              title={newSidebarEnabled ? "搜索" : "新建项目"}
+            >
+              {newSidebarEnabled ? <Search className="h-5 w-5" /> : <Plus className="h-5 w-5" />}
+            </Button>
+            {newSidebarEnabled ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  navigate("/")
+                  onClose()
+                }}
+                className={cn(
+                  "size-10 rounded-lg hover:!border-border/0 md:hidden",
+                  isLocalProjectsActive ? "text-foreground" : "text-muted-foreground"
+                )}
+                title="项目"
+              >
+                <House className="h-5 w-5" />
+              </Button>
+            ) : null}
+            {showDevBadge ? (
+              <span
+                className="mr-1 hidden md:inline-flex items-center rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-bold tracking-wider text-muted-foreground"
+                title="开发构建"
+              >
+                DEV
+              </span>
+            ) : showUpdateButton ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="hidden md:inline-flex rounded-full !h-auto mr-1 py-0.5 px-2 bg-logo/20 hover:bg-logo text-logo border-logo/20 hover:text-foreground hover:border-logo/20 text-[11px] font-bold tracking-wider"
+                onClick={onOpenChangelog}
+                disabled={isUpdating}
+                title={updateSnapshot?.latestVersion ? `更新到 ${updateSnapshot.latestVersion}` : "更新 Aiang"}
+              >
+                {isUpdating ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : null}
+                UPDATE
+              </Button>
+            ) : null}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={newSidebarEnabled
+                ? () => openCommandPalette()
+                : () => {
+                  navigate("/")
+                  onClose()
+                }}
+              className="hidden md:inline-flex h-10 w-auto rounded-lg px-1.5 pl-2 hover:!border-border/0"
+              title={newSidebarEnabled ? "搜索" : "新建项目"}
+            >
+              {newSidebarEnabled ? <Search className="size-4" /> : <Plus className="size-4" />}
+            </Button>
+            {newSidebarEnabled ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  navigate("/")
+                  onClose()
+                }}
+                className={cn(
+                  "hidden md:inline-flex h-10 w-auto rounded-lg pl-1.5 pr-3 hover:!border-border/0",
+                  isLocalProjectsActive ? "text-foreground" : "text-muted-foreground"
+                )}
+                title="项目"
+              >
+                <House className="size-4" />
+              </Button>
+            ) : null}
+          </div>
+        </div>
+
+        <div
+          ref={scrollContainerRef}
+          className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden scrollbar-hide"
+          style={{
+            WebkitOverflowScrolling: "touch",
+            touchAction: "pan-y",
+          }}
+        >
+          <div className="p-[7px]">
+            {newSidebarEnabled ? (
+              <div className="flex flex-col gap-[1px] pb-2">
+                {/* The switcher overlays the New Chat row's right end rather
+                    than sharing a flex row with it, so all three rows keep the
+                    same full-width hover target. */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => openCommandPalette("new-thread")}
+                    className="flex w-full items-center gap-2 rounded-lg border border-border/0 px-2 py-1.5 max-md:py-2 text-sm max-md:text-base text-muted-foreground transition-colors hover:border-border hover:bg-muted"
+                  >
+                    <SquarePen className="h-4 w-4 shrink-0" />
+                    <span>新建对话</span>
+                  </button>
+                  <div className="absolute inset-y-0 right-0 flex items-center">
+                    <SidebarViewSwitcher view={sidebarView} onChange={changeSidebarView} />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openCommandPalette("add-project")}
+                  className="flex w-full items-center gap-2 rounded-lg border border-border/0 px-2 py-1.5 max-md:py-2 text-sm max-md:text-base text-muted-foreground transition-colors hover:border-border hover:bg-muted"
+                >
+                  <Plus className="h-4 w-4 shrink-0" />
+                  <span>添加项目</span>
+                </button>
+                {devbox ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigate("/terminal")
+                      onClose()
+                    }}
+                    className="flex w-full items-center gap-2 rounded-lg border border-border/0 px-2 py-1.5 max-md:py-2 text-sm max-md:text-base text-muted-foreground transition-colors hover:border-border hover:bg-muted"
+                  >
+                    <Terminal className="h-4 w-4 shrink-0" />
+                    <span>终端</span>
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
+            {!hasVisibleChats && isConnecting ? (
+              <div className="space-y-5 px-1 pt-3">
+                {[0, 1, 2].map((section) => (
+                  <div key={section} className="space-y-2 animate-pulse">
+                    <div className="h-4 w-28 rounded bg-muted" />
+                    <div className="space-y-1">
+                      {[0, 1, 2].map((row) => (
+                        <div key={row} className="flex items-center gap-2 rounded-md px-3 py-2">
+                          <div className="h-3.5 w-3.5 rounded-full bg-muted" />
+                          <div
+                            className={cn(
+                              "h-3.5 rounded bg-muted",
+                              row === 0 ? "w-32" : row === 1 ? "w-40" : "w-28"
+                            )}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {!hasVisibleChats && !isConnecting && data.projectGroups.length === 0 ? (
+              <p className="text-sm text-slate-400 p-2 mt-6 text-center">还没有对话</p>
+            ) : null}
+
+            {newSidebarEnabled && sidebarView === "recents" ? (
+              <ThreadSections
+                data={data}
+                activeChatId={activeChatId}
+                editorLabel={editorLabel}
+                nowMs={nowMs}
+                onSelectChat={selectChat}
+                onSelectChatMessage={selectChatMessage}
+                onSetupGit={onSetupGit}
+                onLoadTouchedFiles={onLoadTouchedFiles}
+                onOpenArchivedChat={onOpenArchivedChat}
+                onRestoreChat={onRestoreChat}
+                onCreateChat={onCreateChat}
+                onRenameChat={onRenameChat}
+                onShareChat={onShareChat}
+                onForkChat={onForkChat}
+                onArchiveChat={onArchiveChat}
+                onDeleteChat={onDeleteChat}
+                onCopyPath={onCopyPath}
+                onOpenExternalPath={onOpenExternalPath}
+              />
+            ) : null}
+
+            {!newSidebarEnabled || sidebarView === "projects" ? (
+              <LocalProjectsSection
+                projectGroups={visibleProjectGroups}
+                editorLabel={editorLabel}
+                onReorderGroups={onReorderProjectGroups}
+                collapsedSections={collapsedSections}
+                expandedGroups={expandedGroups}
+                onToggleSection={toggleSection}
+                onToggleExpandedGroup={toggleExpandedGroup}
+                renderChatRow={renderChatRow}
+                onShowArchivedProject={setArchivedProjectId}
+                onNewLocalChat={(localPath) => {
+                  const projectId = projectIdByPath.get(localPath)
+                  if (projectId) {
+                    onCreateChat(projectId)
+                  }
+                }}
+                onCopyPath={onCopyPath}
+                onOpenExternalPath={onOpenExternalPath}
+                onRenameProject={onRenameProject}
+                onHideProject={onHideProject}
+                isConnected={connectionStatus === "connected"}
+                newSidebar={newSidebarProjectsView}
+              />
+            ) : null}
+          </div>
+        </div>
+
+          <MachineSwitcher />
+        <div className={cn("hidden md:block border-t border-border p-2", isStandalone && "pb-[55px]")}>
+          <button
+            type="button"
+            onClick={() => {
+              navigate("/settings/status")
+              onClose()
+              void refreshDeepSeekStatus(true)
+            }}
+            className={cn(
+              "mb-1 w-full rounded-xl rounded-t-md border px-3 py-2 text-left transition-colors",
+              isStatusPageActive
+                ? "bg-muted border-border"
+                : "border-border/0 hover:bg-muted hover:border-border active:bg-muted/80"
+            )}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Activity className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm">DP 状态</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span>{serviceStatusLabel}</span>
+                <span className={cn("h-2 w-2 rounded-full", serviceStatusDot)} />
+              </div>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              navigate("/settings/general")
+              onClose()
+            }}
+            className={cn(
+              "w-full rounded-xl rounded-t-md border px-3 py-2 text-left transition-colors",
+              isSettingsActive
+                ? "bg-muted border-border"
+                : "border-border/0 hover:bg-muted hover:border-border active:bg-muted/80"
+            )}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Settings className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm">设置</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span>{statusLabel}</span>
+                {isConnecting ? (
+                  <Loader2 className="h-2 w-2 animate-spin" />
+                ) : (
+                  <span className={cn("h-2 w-2 rounded-full", statusDotClass)} />
+                )}
+              </div>
+            </div>
+          </button>
+        </div>
+
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="调整侧边栏宽度"
+          tabIndex={0}
+          title="调整侧边栏宽度"
+          className={cn(
+            "hidden md:block absolute -right-1 top-3 bottom-3 z-20 w-2 cursor-col-resize rounded-full",
+            "focus-visible:outline-none"
+          )}
+          onPointerDown={(event) => {
+            event.preventDefault()
+            resizeStartRef.current = {
+              pointerX: event.clientX,
+              width: sidebarWidth,
+            }
+            setIsResizingSidebar(true)
+          }}
+          onDoubleClick={() => {
+            setSidebarWidth(DEFAULT_SIDEBAR_WIDTH)
+            persistSidebarWidth(DEFAULT_SIDEBAR_WIDTH)
+          }}
+          onKeyDown={(event) => {
+            let nextWidth: number | null = null
+            if (event.key === "ArrowLeft") nextWidth = sidebarWidth - 16
+            else if (event.key === "ArrowRight") nextWidth = sidebarWidth + 16
+            else if (event.key === "Home") nextWidth = MIN_SIDEBAR_WIDTH
+            else if (event.key === "End") nextWidth = MAX_SIDEBAR_WIDTH
+            else if (event.key === "Enter") nextWidth = DEFAULT_SIDEBAR_WIDTH
+            if (nextWidth === null) return
+            event.preventDefault()
+            const clampedWidth = clampSidebarWidth(nextWidth)
+            setSidebarWidth(clampedWidth)
+            persistSidebarWidth(clampedWidth)
+          }}
+        />
+      </div>
+
+      <Dialog
+        open={Boolean(archivedProject)}
+        onOpenChange={(dialogOpen) => {
+          if (!dialogOpen) setArchivedProjectId(null)
+        }}
+      >
+        <DialogContent size="md">
+          <DialogHeader>
+            <DialogTitle>已归档对话</DialogTitle>
+            <DialogDescription>
+              {archivedProject?.localPath ?? ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-1">
+            {archivedProject?.archivedChats?.length ? (
+              archivedProject.archivedChats.map((chat) => (
+                <button
+                  key={chat.chatId}
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-border/0 px-3 py-2 text-left transition-colors hover:border-border hover:bg-muted"
+                  onClick={() => {
+                    onOpenArchivedChat(chat.chatId)
+                    setArchivedProjectId(null)
+                    onClose()
+                  }}
+                >
+                  <span className="min-w-0 truncate text-sm">{chat.title}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {formatSidebarAgeLabel(getSidebarChatTimestamp(chat), nowMs)}
+                  </span>
+                </button>
+              ))
+            ) : (
+              <p className="px-1 py-3 text-sm text-muted-foreground">没有已归档的对话</p>
+            )}
+          </DialogBody>
+        </DialogContent>
+      </Dialog>
+
+      {open ? <div className="fixed inset-0 bg-black/40 z-40 md:hidden" onClick={onClose} /> : null}
+    </>
+  )
+}
+
+export const KannaSidebar = memo(KannaSidebarImpl)

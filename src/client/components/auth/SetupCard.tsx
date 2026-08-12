@@ -1,0 +1,44 @@
+import { ChevronRight, KeyRound } from "lucide-react"
+import { cn } from "../../lib/utils"
+import { useProviderAuthStore, useShowSetupCard } from "../../stores/providerAuthStore"
+
+/**
+ * Compact "finish setup" entry point shown on the home page and new-chat empty
+ * state while the machine still lacks a DeepSeek API Key. Clicking opens the
+ * full-screen setup wizard (single DeepSeek step + done).
+ */
+export function SetupCard({ className }: { className?: string }) {
+  const show = useShowSetupCard()
+  const openSetupWizard = useProviderAuthStore((store) => store.openSetupWizard)
+  if (!show) return null
+
+  return (
+    <button
+      type="button"
+      onClick={openSetupWizard}
+      className={cn(
+        "group w-full rounded-2xl border border-border bg-card/40 px-3.5 py-3 text-left transition-colors hover:border-primary/30 hover:bg-muted/40",
+        className
+      )}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <KeyRound className="h-4 w-4 shrink-0 text-logo" />
+          <span className="truncate text-sm font-semibold text-foreground">配置 DeepSeek</span>
+        </div>
+        <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full border border-border px-2.5 py-1 text-xs font-semibold text-foreground transition-colors group-hover:bg-muted">
+          Setup
+          <ChevronRight className="h-3.5 w-3.5 -mr-0.5" />
+        </span>
+      </div>
+      <div className="mt-2.5 flex items-center gap-3">
+        <div className="flex items-center gap-2.5">
+          <KeyRound className="h-4 w-4 text-muted-foreground/40" />
+        </div>
+        <span className="min-w-0 truncate text-xs text-muted-foreground">
+          填入 DeepSeek API Key 即可开始使用，对话全部通过内置引擎在本机运行。
+        </span>
+      </div>
+    </button>
+  )
+}
