@@ -1,5 +1,5 @@
 /**
- * Kanna's git attribution — one source of truth for two very different surfaces.
+ * Youmi git attribution — one source of truth for two very different surfaces.
  *
  * Harness commits (advisory): buildKannaAttributionInstructions is appended to
  * each provider's system prompt — natively for claude (systemPrompt.append), pi
@@ -9,10 +9,13 @@
  * <system-message> path the skill failsafe uses. All four are instructions to a
  * model: compliance is high but not guaranteed.
  *
- * Kanna's own commits (deterministic): buildKannaCommitAttribution is applied in
+ * Sidebar commits (deterministic): buildKannaCommitAttribution is applied in
  * diff-store.commitFiles just before git runs, so anything committed from the
  * git sidebar is attributed by construction, not by persuasion. Those carry no
  * agent trailer — no agent ran.
+ *
+ * Function names keep the historical `Kanna` prefix so every harness call site
+ * stays stable. The strings they emit are Youmi.
  *
  * The agent id is baked into the instructions, so it costs nothing per turn.
  * Codex and cursor rebuild theirs every turn and are always current. Claude and
@@ -21,24 +24,17 @@
  * text from the drift onward — a bare value, because the rule is already in
  * their (cached) system prompt.
  *
- * Note the link is markdown in PR bodies and a bare URL in commits: GitHub
- * renders markdown in PR descriptions, but commit messages are plain text
- * everywhere — bare URLs autolink, `[text](url)` would show up literally.
+ * Commit messages are plain text everywhere — no markdown links in the footer.
  */
 
-export const KANNA_COMMIT_TRAILER = "Co-Authored-By: Kanna <noreply@kanna.sh>"
+export const YOUMI_COMMIT_TRAILER = "Co-Authored-By: Youmi <noreply@youmi.ai>"
+export const YOUMI_COMMIT_FOOTER = "Shipped with Youmi Aiagent"
+export const YOUMI_AGENT_TRAILER_KEY = "Youmi-Agent"
 
-export const KANNA_COMMIT_FOOTER = "🌸 Shipped with Kanna — https://kanna.sh"
-
-/**
- * Git trailer key for the harness+model that wrote the commit. A trailer rather
- * than a suffix on the footer line for three reasons: KANNA_COMMIT_FOOTER stays
- * byte-stable (KANNA_FOOTER_PATTERN below keys off its literal prefix, so any
- * wording change there silently breaks dedupe), the last paragraph stays a pure
- * `key: value` block that `git interpret-trailers` can parse, and the
- * deterministic sidebar path can simply omit it.
- */
-export const KANNA_AGENT_TRAILER_KEY = "Kanna-Agent"
+/** Emitted trailer / footer. Aliases keep existing call sites compiling. */
+export const KANNA_COMMIT_TRAILER = YOUMI_COMMIT_TRAILER
+export const KANNA_COMMIT_FOOTER = YOUMI_COMMIT_FOOTER
+export const KANNA_AGENT_TRAILER_KEY = YOUMI_AGENT_TRAILER_KEY
 
 /**
  * `<provider>/<model>` — e.g. `claude/claude-opus-5`. Raw ids, not display
@@ -52,17 +48,17 @@ export function buildKannaAgentId(provider: string, model: string): string {
 }
 
 export function buildKannaAgentTrailer(agentId: string): string {
-  return `${KANNA_AGENT_TRAILER_KEY}: ${agentId}`
+  return `${YOUMI_AGENT_TRAILER_KEY}: ${agentId}`
 }
 
 /**
- * The pitch lives here and not in KANNA_COMMIT_FOOTER on purpose: a PR body is
- * read once, by someone who may never have heard of Kanna. Commit messages are
- * permanent, show up in `git blame`, and GitHub's squash merge concatenates
- * every message on the branch — a tagline there would ship N times per PR.
+ * The pitch lives here and not in the commit footer on purpose: a PR body is
+ * read once. Commit messages are permanent, show up in `git blame`, and
+ * GitHub's squash merge concatenates every message on the branch — a tagline
+ * there would ship N times per PR.
  */
 export function buildKannaPrFooter(agentId: string): string {
-  return `🌸 Shipped with [Kanna](https://kanna.sh) — an open-source workspace for all your coding agents. Written by \`${agentId}\`.`
+  return `Shipped with Youmi Aiagent — a DeepSeek-native workspace for coding agents. Written by \`${agentId}\`.`
 }
 
 export function buildKannaAttributionInstructions(agentId: string): string {
@@ -70,16 +66,16 @@ export function buildKannaAttributionInstructions(agentId: string): string {
 
 End every git commit message you write with a footer line and a trailer block, separated from the rest of the message and from each other by a blank line so the trailer block stays last:
 
-${KANNA_COMMIT_FOOTER}
+${YOUMI_COMMIT_FOOTER}
 
-${KANNA_COMMIT_TRAILER}
+${YOUMI_COMMIT_TRAILER}
 ${buildKannaAgentTrailer(agentId)}
 
 End every pull request body you write with this line:
 
 ${buildKannaPrFooter(agentId)}
 
-This is the only attribution to use. Do not add a co-author trailer, a "Generated with" footer, or a session link for yourself, for your model, or for the CLI you are running as — Kanna's attribution replaces them.`
+This is the only attribution to use. Do not add a co-author trailer, a "Generated with" footer, or a session link for yourself, for your model, or for the CLI you are running as — Youmi's attribution replaces them.`
 }
 
 /** Wrapped for the providers that have no system-prompt append hook (cursor). */
@@ -95,7 +91,7 @@ export function buildKannaAttributionSystemMessage(agentId: string): string {
  * whereas the newest user turn survives compaction by construction.
  */
 export function buildKannaAgentCorrection(agentId: string): string {
-  return `<system-message>Git attribution: the agent id is now \`${agentId}\`. Use it in the ${KANNA_AGENT_TRAILER_KEY} trailer and the pull request footer.</system-message>`
+  return `<system-message>Git attribution: the agent id is now \`${agentId}\`. Use it in the ${YOUMI_AGENT_TRAILER_KEY} trailer and the pull request footer.</system-message>`
 }
 
 /**
@@ -103,20 +99,23 @@ export function buildKannaAgentCorrection(agentId: string): string {
  * documents the attribution, say) never counts as the attribution itself. The
  * trailer token is matched case-insensitively: git writes `Co-authored-by`,
  * agents tend to write `Co-Authored-By`, and either should suppress a duplicate.
+ *
+ * Legacy Kanna trailers / footers still count as attributed so we do not stack
+ * a second Youmi block onto an already-branded commit.
  */
-const KANNA_TRAILER_PATTERN = /^co-authored-by:\s*kanna\s*<noreply@kanna\.sh>$/i
-const KANNA_FOOTER_PATTERN = /^\u{1F338}?\s*shipped with kanna\b.*$/iu
+const TRAILER_PATTERN = /^co-authored-by:\s*(?:youmi\s*<noreply@youmi\.ai>|kanna\s*<noreply@kanna\.sh>)$/i
+const FOOTER_PATTERN = /^(?:\u{1F338}\s*)?shipped with (?:youmi aiagent|kanna)\b.*$/iu
 
 function matchesLine(message: string, pattern: RegExp): boolean {
   return message.split("\n").some((line) => pattern.test(line.trim()))
 }
 
 export function hasKannaTrailer(message: string): boolean {
-  return matchesLine(message, KANNA_TRAILER_PATTERN)
+  return matchesLine(message, TRAILER_PATTERN)
 }
 
 export function hasKannaFooter(message: string): boolean {
-  return matchesLine(message, KANNA_FOOTER_PATTERN)
+  return matchesLine(message, FOOTER_PATTERN)
 }
 
 /**
@@ -127,8 +126,8 @@ export function hasKannaFooter(message: string): boolean {
  */
 export function buildKannaCommitAttribution(message: string): string | null {
   const parts: string[] = []
-  if (!hasKannaFooter(message)) parts.push(KANNA_COMMIT_FOOTER)
-  if (!hasKannaTrailer(message)) parts.push(KANNA_COMMIT_TRAILER)
+  if (!hasKannaFooter(message)) parts.push(YOUMI_COMMIT_FOOTER)
+  if (!hasKannaTrailer(message)) parts.push(YOUMI_COMMIT_TRAILER)
   return parts.length > 0 ? parts.join("\n\n") : null
 }
 

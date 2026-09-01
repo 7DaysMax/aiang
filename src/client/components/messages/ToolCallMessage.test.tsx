@@ -10,7 +10,7 @@ import { ToolCallMessage } from "./ToolCallMessage"
 import { ReadResultImages } from "./ToolCallExpandedContent"
 
 describe("ToolCallMessage", () => {
-  test("renders a pending bash call as 正在运行", () => {
+  test("renders a pending bash call as a compact run chip", () => {
     const message: HydratedBashToolCall = {
       id: "bash-pending",
       kind: "tool",
@@ -23,10 +23,12 @@ describe("ToolCallMessage", () => {
 
     const html = renderToStaticMarkup(<ToolCallMessage message={message} isLoading />)
 
-    expect(html).toContain("正在运行 cd /tmp &amp;&amp; bunx tsc --noEmit")
+    expect(html).toContain("运行")
+    expect(html).toContain("cd /tmp &amp;&amp; bunx tsc --noEmit")
+    expect(html).toContain("running…")
   })
 
-  test("renders a finished bash call with its duration", () => {
+  test("renders a finished bash call with a check detail line", () => {
     const message: HydratedBashToolCall = {
       id: "bash-done",
       kind: "tool",
@@ -41,10 +43,12 @@ describe("ToolCallMessage", () => {
 
     const html = renderToStaticMarkup(<ToolCallMessage message={message} />)
 
-    expect(html).toContain("已在 3.3s 内运行 cd /tmp &amp;&amp; ls")
+    expect(html).toContain("运行")
+    expect(html).toContain("cd /tmp &amp;&amp; ls")
+    expect(html).toContain("✓ 3.3s")
   })
 
-  test("renders a pending grep call as 正在搜索", () => {
+  test("renders a pending grep call as a search chip", () => {
     const message: HydratedGrepToolCall = {
       id: "grep-pending",
       kind: "tool",
@@ -57,10 +61,11 @@ describe("ToolCallMessage", () => {
 
     const html = renderToStaticMarkup(<ToolCallMessage message={message} isLoading />)
 
-    expect(html).toContain("正在搜索 `status.*no_repo`")
+    expect(html).toContain("搜索")
+    expect(html).toContain("status.*no_repo")
   })
 
-  test("renders a finished read call as 已读取 with a duration suffix", () => {
+  test("renders a finished read call with the filename chip", () => {
     const message: HydratedReadFileToolCall = {
       id: "read-done",
       kind: "tool",
@@ -77,7 +82,8 @@ describe("ToolCallMessage", () => {
       <ToolCallMessage message={message} localPath="/Users/eason/Desktop/Youmi/aiang" />
     )
 
-    expect(html).toContain("已读取 src/client/components/chat-ui/GitPanel.tsx（2s）")
+    expect(html).toContain("读取")
+    expect(html).toContain("GitPanel.tsx")
   })
 
   test("renders read result image blocks as inline images", () => {
@@ -110,7 +116,8 @@ describe("ToolCallMessage", () => {
 
     const html = renderToStaticMarkup(<ToolCallMessage message={message} />)
 
-    expect(html).toContain("读取技能 – shadcn")
+    expect(html).toContain("读取技能")
+    expect(html).toContain("shadcn")
   })
 
   test("renders WebFetch / TaskOutput / cron tools with Chinese labels", () => {
@@ -124,7 +131,8 @@ describe("ToolCallMessage", () => {
       timestamp: new Date().toISOString(),
     }
     const fetchHtml = renderToStaticMarkup(<ToolCallMessage message={fetchCall} />)
-    expect(fetchHtml).toContain("抓取 https://example.com")
+    expect(fetchHtml).toContain("抓取")
+    expect(fetchHtml).toContain("https://example.com")
 
     const taskOutput: import("../../../shared/types").HydratedTaskOutputToolCall = {
       id: "taskout-1",
@@ -136,7 +144,8 @@ describe("ToolCallMessage", () => {
       timestamp: new Date().toISOString(),
     }
     const taskHtml = renderToStaticMarkup(<ToolCallMessage message={taskOutput} />)
-    expect(taskHtml).toContain("查看子任务输出（task-9）")
+    expect(taskHtml).toContain("查看子任务输出")
+    expect(taskHtml).toContain("task-9")
 
     const cron: import("../../../shared/types").HydratedCronCreateToolCall = {
       id: "cron-1",
@@ -148,6 +157,8 @@ describe("ToolCallMessage", () => {
       timestamp: new Date().toISOString(),
     }
     const cronHtml = renderToStaticMarkup(<ToolCallMessage message={cron} />)
-    expect(cronHtml).toContain("创建定时任务 `0 9 * * *`")
+    expect(cronHtml).toContain("创建定时任务")
+    expect(cronHtml).toContain("0 9 * * *")
+    expect(cronHtml).toContain("npm test")
   })
 })

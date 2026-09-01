@@ -1,7 +1,6 @@
 import { query, type CanUseTool, type PermissionResult, type Query, type SDKUserMessage, type SlashCommand } from "@anthropic-ai/claude-agent-sdk"
 import { homedir } from "node:os"
-import path from "node:path"
-import { getClaudeConfigDir } from "../shared/branding"
+import { envFlagEnabled } from "../shared/branding"
 import type {
   AgentProvider,
   ChatAttachment,
@@ -27,16 +26,18 @@ import { CursorCliManager } from "./cursor-cli"
 import { PiAgentManager, resolvePiConnection } from "./pi-agent"
 import { startReasonixSession, type ReasonixSessionHandle } from "./reasonix-agent"
 import {
-  CCB_BUILTIN_COMMANDS,
+  formatYoumiStartupError,
+  startYoumiSession,
+  type YoumiSessionHandle,
+} from "./youmi-agent"
+import {
   buildCcbEnv,
   ccbSdkModel,
   DEEPSEEK_CONTEXT_WINDOW_TOKENS,
   failedDeepSeekTurn,
   INVALID_DEEPSEEK_KEY_MESSAGE,
   isPlausibleApiKey,
-  MISSING_DEEPSEEK_KEY_MESSAGE,
   resolveCcbExecutable,
-  resolveDeepSeekApiKey,
   withVendoredRgOnPath,
 } from "./deepseek-agent"
 import { type GenerateChatTitleResult, generateTitleForChatDetailed } from "./generate-title"
@@ -47,11 +48,10 @@ import {
   buildSkillSystemMessage,
   findSkillByName,
   parseSkillInvocation,
-  scanClaudeSkills,
   scanCodexSkills,
   scanCursorSkills,
-  scanSkillsRoot,
 } from "./harness-skills"
+import { listFilesystemSkills } from "./harness-adapter"
 import {
   buildKannaAgentCorrection,
   buildKannaAgentId,
@@ -68,6 +68,7 @@ import {
   normalizeCodexModelOptions,
   normalizeCursorModelOptions,
   normalizeDeepSeekModelOptions,
+  normalizeYoumiModelOptions,
   normalizePiModelOptions,
   normalizeServerModel,
   serviceTierFromModelOptions,
@@ -83,7 +84,15 @@ import {
   buildVisionSystemHint,
   VISION_MCP_SERVER_NAME,
 } from "./vision"
-import { loadMemorySystemHint } from "./memory"
+import { loadMemorySystemHint, persistTurnMemoryFromChat } from "./memory"
+import {
+  COLLABORATION_MAX_AUTO_REVIEWS,
+  COLLABORATION_REVIEW_PROMPT,
+  engineSupportsCollaboration,
+  parseCollaborationVerdict,
+} from "../shared/collaboration"
+import { modelRuntimeKey, resolveModelRuntime, syncCodexFromModelRuntime } from "./model-profiles"
+import { penguinProviderForProfile } from "../shared/model-profile"
 import { PartialAssistantAccumulator } from "./claude-partial-stream"
 
 /**
@@ -150,8 +159,12 @@ interface ActiveTurn {
   pendingTool: PendingToolRequest | null
   postToolFollowUp: { content: string; planMode: boolean } | null
   hasFinalResult: boolean
+  turnSucceeded?: boolean
   cancelRequested: boolean
   cancelRecorded: boolean
+  collaboration?: boolean
+  collaborationPhase?: "implement" | "review"
+  collaborationAttempts?: number
 }
 
 interface ClaudeSessionHandle {
@@ -174,8 +187,9 @@ interface ClaudeSessionState {
   chatId: string
   session: ClaudeSessionHandle
   provider: "claude" | "deepseek"
-  /** 实际执行引擎：ccb（DeepSeek）还是官方 Claude Code（Anthropic）。 */
+  /** 实际执行引擎：ccb（OpenAI 兼容档案）还是官方 Claude Code（Anthropic）。 */
   engine: "claude" | "deepseek"
+  runtimeKey: string
   localPath: string
   model: string
   /**
@@ -225,6 +239,19 @@ interface ReasonixSessionState {
   stallRecorded: boolean
 }
 
+interface YoumiSessionState {
+  id: string
+  chatId: string
+  session: YoumiSessionHandle
+  provider: "youmi"
+  localPath: string
+  model: string
+  effort?: string
+  planMode: boolean
+  autoPlan: boolean
+  stallRecorded: boolean
+}
+
 interface AgentCoordinatorArgs {
   store: EventStore
   onStateChange: (chatId?: string, options?: { immediate?: boolean }) => void
@@ -260,7 +287,36 @@ interface AgentCoordinatorArgs {
 
 
 function isClaudeSteerLoggingEnabled() {
-  return process.env.KANNA_LOG_CLAUDE_STEER === "1"
+  return envFlagEnabled("AIANG_LOG_CLAUDE_STEER", "KANNA_LOG_CLAUDE_STEER")
+}
+
+const MISSING_MODEL_PROFILE_MESSAGE =
+  "未配置模型档案。请在「设置 → 模型服务」添加一份档案（baseUrl、API Key、模型）。"
+
+function requireModelProfileCredentials(): HarnessTurn | null {
+  const runtime = resolveModelRuntime()
+  if (runtime.kind === "none" || !runtime.apiKey) {
+    return failedDeepSeekTurn(MISSING_MODEL_PROFILE_MESSAGE)
+  }
+  if (!isPlausibleApiKey(runtime.apiKey)) {
+    return failedDeepSeekTurn(INVALID_DEEPSEEK_KEY_MESSAGE)
+  }
+  return null
+}
+
+function resolveClaudeHarness(
+  provider: "claude" | "deepseek",
+  model: string,
+): { engine: "claude" | "deepseek"; wireModel: string; runtimeKey: string } {
+  const runtime = resolveModelRuntime()
+  const openAiCompat = runtime.kind !== "none" && runtime.protocol === "openai-compat"
+  const anthropicRelay = runtime.kind === "profile" && runtime.protocol === "anthropic"
+  const engine: "claude" | "deepseek" =
+    provider === "deepseek" || model.startsWith("deepseek-") || openAiCompat
+      ? "deepseek"
+      : "claude"
+  const wireModel = (openAiCompat || anthropicRelay) && runtime.modelId ? runtime.modelId : model
+  return { engine, wireModel, runtimeKey: modelRuntimeKey(runtime) }
 }
 
 function logClaudeSteer(stage: string, details?: Record<string, unknown>) {
@@ -352,6 +408,7 @@ interface SendMessageOptions {
   effort?: string
   planMode?: boolean
   autoPlan?: boolean
+  collaboration?: boolean
 }
 
 function stringFromUnknown(value: unknown) {
@@ -626,14 +683,37 @@ export function normalizeClaudeStreamMessage(
     if (message.subtype === "cancelled") {
       return [timestamped({ kind: "interrupted", messageId })]
     }
+    const isError = Boolean(message.is_error)
+    // SDK 成功结果带 result 字符串；失败结果（error_during_execution 等）
+    // 只有 errors: string[]，没有 result。只读 result 会得到空串，UI 就显示
+    // 「发生未知错误。」
+    let resultText = typeof message.result === "string" ? message.result : ""
+    if (!resultText && Array.isArray(message.errors)) {
+      resultText = message.errors
+        .filter((entry: unknown): entry is string => typeof entry === "string" && entry.trim().length > 0)
+        .join("\n")
+    }
+    if (!resultText && message.result !== undefined && message.result !== null && typeof message.result !== "string") {
+      resultText = stringFromUnknown(message.result)
+    }
+    if (isError && !resultText.trim()) {
+      const subtype = typeof message.subtype === "string" ? message.subtype : "error"
+      resultText = subtype === "error_during_execution"
+        ? "回合执行失败（引擎未返回详细信息）。若刚切换到 Claude/Opus，请确认已登录 Anthropic，或切回 DeepSeek。"
+        : subtype === "error_max_turns"
+          ? "已达到最大回合数。"
+          : subtype === "error_max_budget_usd"
+            ? "已达到费用预算上限。"
+            : `回合失败（${subtype}）。`
+    }
     return [
       timestamped({
         kind: "result",
         messageId,
-        subtype: message.is_error ? "error" : "success",
-        isError: Boolean(message.is_error),
+        subtype: isError ? "error" : "success",
+        isError,
         durationMs: typeof message.duration_ms === "number" ? message.duration_ms : 0,
-        result: typeof message.result === "string" ? message.result : stringFromUnknown(message.result),
+        result: resultText,
         costUsd: typeof message.total_cost_usd === "number" ? message.total_cost_usd : undefined,
       }),
     ]
@@ -868,12 +948,8 @@ async function startClaudeSession(args: {
   onRateLimitEvent?: (info: ClaudeRateLimitInfoRaw) => void
 }): Promise<ClaudeSessionHandle> {
   const provider = args.provider ?? "claude"
-  // 引擎分流：deepseek provider，或 claude 入口里选中 DeepSeek V4 模型 →
-  // ccb（魔改 Claude Code CLI）+ 配置的 DeepSeek key；其余 claude 模型 →
-  // 官方 Claude Code CLI（Anthropic）。
-  const engine: "claude" | "deepseek" = provider === "deepseek" || args.model.startsWith("deepseek-")
-    ? "deepseek"
-    : "claude"
+  const { engine, wireModel } = resolveClaudeHarness(provider, args.model)
+  const runtime = resolveModelRuntime()
   const canUseTool: CanUseTool = async (toolName, input, options) => {
     if (toolName !== "AskUserQuestion" && toolName !== "ExitPlanMode") {
       return {
@@ -938,7 +1014,7 @@ async function startClaudeSession(args: {
       cwd: args.localPath,
       // ccb 引擎靠模型名里的 [1m] 标记识别 1M 上下文窗口（否则内部按 200k
       // 在 167k 就触发压缩）；官方引擎保持原样。
-      model: engine === "deepseek" ? ccbSdkModel(args.model) : args.model,
+      model: engine === "deepseek" ? ccbSdkModel(wireModel) : wireModel,
       effort: args.effort as "low" | "medium" | "high" | "max" | undefined,
       resume: args.sessionToken ?? undefined,
       forkSession: args.forkSession,
@@ -956,7 +1032,7 @@ async function startClaudeSession(args: {
         type: "preset",
         preset: "claude_code",
         append: [
-          buildKannaAttributionInstructions(buildKannaAgentId(provider, args.model)),
+          buildKannaAttributionInstructions(buildKannaAgentId(provider, wireModel)),
           CLAUDE_BASH_GUARD_INSTRUCTION,
           buildVisionSystemHint(),
         ].filter(Boolean).join("\n\n"),
@@ -980,7 +1056,9 @@ async function startClaudeSession(args: {
               const { CLAUDECODE: _, ...env } = process.env
               return withVendoredRgOnPath({
                 ...env,
-                ...buildCcbEnv(resolveDeepSeekApiKey() ?? "", args.model, args.effort),
+                ...buildCcbEnv(runtime.apiKey, runtime.modelId || wireModel, args.effort, {
+                  baseUrl: runtime.baseUrl || undefined,
+                }),
               })
             })(),
           }
@@ -999,7 +1077,13 @@ async function startClaudeSession(args: {
                 CLAUDE_CODE_EFFORT_LEVEL: _ccbEffort,
                 ...env
               } = process.env
-              return withVendoredRgOnPath(env)
+              const anthropicRelay = runtime.kind === "profile" && runtime.protocol === "anthropic"
+                ? {
+                  ANTHROPIC_API_KEY: runtime.apiKey,
+                  ANTHROPIC_BASE_URL: runtime.baseUrl,
+                }
+                : {}
+              return withVendoredRgOnPath({ ...env, ...anthropicRelay })
             })(),
           }),
     },
@@ -1095,6 +1179,7 @@ export class AgentCoordinator {
   readonly drainingStreams = new Map<string, { turn: HarnessTurn }>()
   readonly claudeSessions = new Map<string, ClaudeSessionState>()
   readonly reasonixSessions = new Map<string, ReasonixSessionState>()
+  readonly youmiSessions = new Map<string, YoumiSessionState>()
 
   constructor(args: AgentCoordinatorArgs) {
     this.store = args.store
@@ -1237,6 +1322,11 @@ export class AgentCoordinator {
       reasonixSession.session.close()
       this.reasonixSessions.delete(chatId)
     }
+    const youmiSession = this.youmiSessions.get(chatId)
+    if (youmiSession) {
+      youmiSession.session.close()
+      this.youmiSessions.delete(chatId)
+    }
     this.piManager.closeChat(chatId)
     this.emitStateChange(chatId)
   }
@@ -1308,6 +1398,17 @@ export class AgentCoordinator {
       }
     }
 
+    if (provider === "youmi") {
+      const modelOptions = normalizeYoumiModelOptions(options.modelOptions, options.effort)
+      return {
+        model: normalizeServerModel(provider, options.model),
+        effort: modelOptions.reasoningEffort,
+        serviceTier: undefined,
+        planMode: catalog.supportsPlanMode ? Boolean(options.planMode) : false,
+        autoPlan: catalog.supportsAutoPlanMode ? Boolean(options.autoPlan) : false,
+      }
+    }
+
     const model = normalizeServerModel(provider, options.model)
     const modelOptions = normalizeCodexModelOptions(model, options.modelOptions, options.effort)
     return {
@@ -1328,6 +1429,7 @@ export class AgentCoordinator {
       modelOptions: options?.modelOptions,
       planMode: options?.planMode,
       autoPlan: options?.autoPlan,
+      collaboration: options?.collaboration,
     })
     this.emitStateChange(chatId)
     return queued
@@ -1350,6 +1452,8 @@ export class AgentCoordinator {
       autoPlan: settings.autoPlan,
       appendUserPrompt: true,
       steered: options?.steered,
+      collaboration: Boolean(queuedMessage.collaboration) && engineSupportsCollaboration(provider),
+      collaborationPhase: "implement",
     })
   }
 
@@ -1360,6 +1464,44 @@ export class AgentCoordinator {
       : undefined
     if (!nextQueuedMessage) return false
     await this.dequeueAndStartQueuedMessage(chatId, nextQueuedMessage)
+    return true
+  }
+
+  private async continueAfterSuccessfulTurn(chatId: string, settled: ActiveTurn) {
+    if (await this.maybeStartCollaborationReview(chatId, settled)) return
+    await this.maybeStartNextQueuedMessage(chatId)
+  }
+
+  private async maybeStartCollaborationReview(chatId: string, settled: ActiveTurn): Promise<boolean> {
+    if (!settled.collaboration || !engineSupportsCollaboration(settled.provider)) return false
+    if (settled.collaborationPhase === "review") {
+      const { pass, summary } = parseCollaborationVerdict(this.store.getMessages(chatId))
+      await this.store.appendMessage(chatId, timestamped({
+        kind: "collaboration_review",
+        verdict: pass ? "pass" : "fail",
+        summary,
+      }))
+      this.emitStateChange(chatId)
+      return false
+    }
+    const attempts = settled.collaborationAttempts ?? 0
+    if (attempts >= COLLABORATION_MAX_AUTO_REVIEWS) return false
+
+    await this.startTurnForChat({
+      chatId,
+      provider: settled.provider,
+      content: COLLABORATION_REVIEW_PROMPT,
+      attachments: [],
+      model: settled.model,
+      effort: settled.effort,
+      serviceTier: settled.serviceTier,
+      planMode: false,
+      autoPlan: false,
+      appendUserPrompt: false,
+      collaboration: true,
+      collaborationPhase: "review",
+      collaborationAttempts: attempts + 1,
+    })
     return true
   }
 
@@ -1521,6 +1663,9 @@ export class AgentCoordinator {
     autoPlan: boolean
     appendUserPrompt: boolean
     steered?: boolean
+    collaboration?: boolean
+    collaborationPhase?: "implement" | "review"
+    collaborationAttempts?: number
   }) {
 
     // Close any lingering draining stream before starting a new turn.
@@ -1640,7 +1785,10 @@ export class AgentCoordinator {
     // 会话记忆（实验功能）：参考本机最近的历史对话，减少重复交代。
     // 统一以 <system-message> 块追加到消息尾部，对 claude / deepseek /
     // codex / cursor / pi / reasonix 全部引擎生效。
-    const memoryHint = await loadMemorySystemHint(this.store)
+    const memoryHint = await loadMemorySystemHint(this.store, {
+      projectId: project.id,
+      excludeChatId: args.chatId,
+    })
     if (memoryHint) {
       wireContent = appendSystemMessageBlock(wireContent, memoryHint)
     }
@@ -1663,14 +1811,11 @@ export class AgentCoordinator {
 
     let turn: HarnessTurn
     if (args.provider === "claude") {
-      // Claude 入口里选中 DeepSeek V4 模型时，和 deepseek 通道一样要求
-      // 配置有效的 DeepSeek API Key。
-      if (args.model.startsWith("deepseek-")) {
-        const apiKey = resolveDeepSeekApiKey()
-        if (!apiKey) {
-          turn = failedDeepSeekTurn(MISSING_DEEPSEEK_KEY_MESSAGE)
-        } else if (!isPlausibleApiKey(apiKey)) {
-          turn = failedDeepSeekTurn(INVALID_DEEPSEEK_KEY_MESSAGE)
+      // 有模型档案时 Claude 走档案；选中 DeepSeek 模型且没有档案时要求配置。
+      if (args.model.startsWith("deepseek-") && resolveModelRuntime().kind === "none") {
+        const blocked = requireModelProfileCredentials()
+        if (blocked) {
+          turn = blocked
         } else {
           turn = await this.startClaudeTurn({
             chatId: args.chatId,
@@ -1740,11 +1885,9 @@ export class AgentCoordinator {
     } else if (args.provider === "deepseek") {
       // Aiang 的 DeepSeek 通道 = vendored ccb 引擎（走 SDK 协议，和 claude
       // 通道共用同一套 transcript/权限渲染）。没配 API Key 时直接返回失败回合。
-      const apiKey = resolveDeepSeekApiKey()
-      if (!apiKey) {
-        turn = failedDeepSeekTurn(MISSING_DEEPSEEK_KEY_MESSAGE)
-      } else if (!isPlausibleApiKey(apiKey)) {
-        turn = failedDeepSeekTurn(INVALID_DEEPSEEK_KEY_MESSAGE)
+      const blocked = requireModelProfileCredentials()
+      if (blocked) {
+        turn = blocked
       } else {
         turn = await this.startClaudeTurn({
           chatId: args.chatId,
@@ -1761,13 +1904,9 @@ export class AgentCoordinator {
         })
       }
     } else if (args.provider === "reasonix") {
-      // Reasonix 引擎（Go ACP 二进制，DeepSeek 原生）与 ccb 通道共用
-      // DeepSeek API Key；没配 key 时直接返回失败回合。
-      const apiKey = resolveDeepSeekApiKey()
-      if (!apiKey) {
-        turn = failedDeepSeekTurn(MISSING_DEEPSEEK_KEY_MESSAGE)
-      } else if (!isPlausibleApiKey(apiKey)) {
-        turn = failedDeepSeekTurn(INVALID_DEEPSEEK_KEY_MESSAGE)
+      const blocked = requireModelProfileCredentials()
+      if (blocked) {
+        turn = blocked
       } else {
         turn = await this.startReasonixTurn({
           chatId: args.chatId,
@@ -1779,7 +1918,27 @@ export class AgentCoordinator {
           onToolRequest,
         })
       }
+    } else if (args.provider === "youmi") {
+      const blocked = requireModelProfileCredentials()
+      if (blocked) {
+        turn = blocked
+      } else {
+        try {
+          turn = await this.startYoumiTurn({
+            chatId: args.chatId,
+            localPath: project.localPath,
+            model: args.model,
+            effort: args.effort,
+            planMode: args.planMode,
+            autoPlan: args.autoPlan,
+            onToolRequest,
+          })
+        } catch (error) {
+          turn = failedDeepSeekTurn(formatYoumiStartupError(error))
+        }
+      }
     } else {
+      syncCodexFromModelRuntime()
       const started = await this.codexManager.startSession({
         chatId: args.chatId,
         cwd: project.localPath,
@@ -1821,6 +1980,9 @@ export class AgentCoordinator {
       status: args.provider === "claude" ? "running" : "starting",
       pendingTool: null,
       postToolFollowUp: null,
+      collaboration: args.collaboration,
+      collaborationPhase: args.collaborationPhase,
+      collaborationAttempts: args.collaborationAttempts,
       hasFinalResult: false,
       cancelRequested: false,
       cancelRecorded: false,
@@ -1855,6 +2017,12 @@ export class AgentCoordinator {
       // 事件由 runReasonixSession 流式落盘；这里不 await，让 chat.send 立即
       // ack。停滞超时由 runReasonixSession 的看门狗统一处理。
       const session = this.reasonixSessions.get(args.chatId)!
+      void session.session.sendPrompt(buildPromptText(wireContent, args.attachments))
+      return
+    }
+
+    if (args.provider === "youmi" && this.youmiSessions.has(args.chatId)) {
+      const session = this.youmiSessions.get(args.chatId)!
       void session.session.sendPrompt(buildPromptText(wireContent, args.attachments))
       return
     }
@@ -1908,11 +2076,7 @@ export class AgentCoordinator {
     onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
   }): Promise<HarnessTurn> {
     const provider = args.provider ?? "claude"
-    // 与 startClaudeSession 保持同一套 engine 判定：claude 入口里选中的
-    // DeepSeek V4 模型同样落到 ccb 引擎。
-    const engine: "claude" | "deepseek" = provider === "deepseek" || args.model.startsWith("deepseek-")
-      ? "deepseek"
-      : "claude"
+    const { engine, wireModel, runtimeKey } = resolveClaudeHarness(provider, args.model)
     let session = this.claudeSessions.get(args.chatId)
 
     // autoPlan changes the SDK's `tools` allowlist, which is fixed at query()
@@ -1930,7 +2094,8 @@ export class AgentCoordinator {
       || session.localPath !== args.localPath
       || session.effort !== args.effort
       || session.autoPlan !== args.autoPlan
-      || (engine === "deepseek" && session.model !== args.model)
+      || session.runtimeKey !== runtimeKey
+      || (engine === "deepseek" && session.model !== wireModel)
       || args.forkSession
     ) {
       if (session) {
@@ -1941,7 +2106,7 @@ export class AgentCoordinator {
       const started = await this.startClaudeSessionFn({
         localPath: args.localPath,
         provider,
-        model: args.model,
+        model: wireModel,
         effort: args.effort,
         serviceTier: args.serviceTier,
         planMode: args.planMode,
@@ -1959,9 +2124,10 @@ export class AgentCoordinator {
         session: started,
         provider,
         engine,
+        runtimeKey,
         localPath: args.localPath,
-        model: args.model,
-        promptAgentId: buildKannaAgentId(provider, args.model),
+        model: wireModel,
+        promptAgentId: buildKannaAgentId(provider, wireModel),
         effort: args.effort,
         serviceTier: args.serviceTier,
         planMode: args.planMode,
@@ -2029,11 +2195,11 @@ export class AgentCoordinator {
         this.reasonixSessions.delete(args.chatId)
       }
 
-      const apiKey = resolveDeepSeekApiKey()
+      const runtime = resolveModelRuntime()
       const started = await startReasonixSession({
         cwd: args.localPath,
-        model: args.model,
-        apiKey: apiKey ?? "",
+        model: runtime.modelId || args.model,
+        apiKey: runtime.apiKey,
         onToolRequest: args.onToolRequest,
       })
       session = {
@@ -2095,10 +2261,13 @@ export class AgentCoordinator {
               await this.store.recordTurnFailed(session.chatId, event.entry.result || "Turn failed")
             } else if (!active.cancelRequested) {
               await this.store.recordTurnFinished(session.chatId)
+              persistTurnMemoryFromChat(this.store, session.chatId)
+              active.turnSucceeded = true
             }
             this.activeTurns.delete(session.chatId)
             if (!active.cancelRequested) {
-              await this.maybeStartNextQueuedMessage(session.chatId)
+              if (active.turnSucceeded) await this.continueAfterSuccessfulTurn(session.chatId, active)
+              else await this.maybeStartNextQueuedMessage(session.chatId)
             }
           }
         }
@@ -2140,6 +2309,149 @@ export class AgentCoordinator {
     }
   }
 
+  /**
+   * Youmi 会话（PenguinHarness）：Agent/Session 常驻 youmiSessions，跨回合续聊；
+   * 回合由 sendPrompt → session.run 驱动，事件经 runYoumiSession 流式落盘。
+   */
+  private async startYoumiTurn(args: {
+    chatId: string
+    localPath: string
+    model: string
+    effort?: string
+    planMode: boolean
+    autoPlan: boolean
+    onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
+  }): Promise<HarnessTurn> {
+    let session = this.youmiSessions.get(args.chatId)
+    if (
+      !session
+      || session.localPath !== args.localPath
+      || session.model !== args.model
+      || session.effort !== args.effort
+      || session.planMode !== args.planMode
+      || session.autoPlan !== args.autoPlan
+    ) {
+      if (session) {
+        session.session.close()
+        this.youmiSessions.delete(args.chatId)
+      }
+
+      const runtime = resolveModelRuntime()
+      const started = await startYoumiSession({
+        cwd: args.localPath,
+        model: runtime.modelId || args.model,
+        effort: args.effort,
+        apiKey: runtime.apiKey,
+        baseUrl: runtime.kind === "none" ? undefined : runtime.baseUrl,
+        penguinProvider: runtime.profile ? penguinProviderForProfile(runtime.profile) : undefined,
+        onToolRequest: args.onToolRequest,
+      })
+      session = {
+        id: crypto.randomUUID(),
+        chatId: args.chatId,
+        session: started,
+        provider: "youmi",
+        localPath: args.localPath,
+        model: args.model,
+        effort: args.effort,
+        planMode: args.planMode,
+        autoPlan: args.autoPlan,
+        stallRecorded: false,
+      }
+      this.youmiSessions.set(args.chatId, session)
+      void this.runYoumiSession(session)
+    }
+
+    return {
+      provider: "youmi",
+      stream: {
+        async *[Symbol.asyncIterator]() {},
+      },
+      interrupt: session.session.interrupt,
+      close: () => {},
+    }
+  }
+
+  private async runYoumiSession(session: YoumiSessionState) {
+    let stalled = false
+    try {
+      const iterator = session.session.stream[Symbol.asyncIterator]()
+      while (true) {
+        const next = await withTurnStallTimeout(iterator.next(), () => {
+          stalled = true
+          session.stallRecorded = true
+        })
+        if (next.done) break
+        const event = next.value
+        if (event.type === "session_token" && event.sessionToken) {
+          await this.store.setSessionToken(session.chatId, event.sessionToken)
+          this.emitStateChange(session.chatId)
+          continue
+        }
+
+        if (!event.entry) continue
+        await this.store.appendMessage(session.chatId, event.entry)
+
+        const active = this.activeTurns.get(session.chatId)
+        if (event.entry.kind === "system_init" && active) {
+          active.status = "running"
+        }
+
+        if (event.entry.kind === "result") {
+          const failed = isErrorResultEntry(event.entry)
+          if (active && active.provider === "youmi") {
+            active.hasFinalResult = true
+            if (failed) {
+              await this.store.recordTurnFailed(session.chatId, event.entry.result || "Turn failed")
+            } else if (!active.cancelRequested) {
+              await this.store.recordTurnFinished(session.chatId)
+              persistTurnMemoryFromChat(this.store, session.chatId)
+              active.turnSucceeded = true
+            }
+            this.activeTurns.delete(session.chatId)
+            if (!active.cancelRequested) {
+              if (active.turnSucceeded) await this.continueAfterSuccessfulTurn(session.chatId, active)
+              else await this.maybeStartNextQueuedMessage(session.chatId)
+            }
+          }
+        }
+
+        this.emitStateChange(session.chatId)
+      }
+    } catch (error) {
+      const active = this.activeTurns.get(session.chatId)
+      if (stalled && active && !active.cancelRequested) {
+        await recordTurnStallFailure(this.store, session.chatId)
+      } else if (active && !active.cancelRequested && !session.stallRecorded) {
+        const message = formatYoumiStartupError(error)
+        await this.store.appendMessage(
+          session.chatId,
+          timestamped({
+            kind: "result",
+            subtype: "error",
+            isError: true,
+            durationMs: 0,
+            result: message,
+          })
+        )
+        await this.store.recordTurnFailed(session.chatId, message)
+      }
+    } finally {
+      if (this.youmiSessions.get(session.chatId) === session) {
+        this.youmiSessions.delete(session.chatId)
+        const active = this.activeTurns.get(session.chatId)
+        if (active?.provider === "youmi") {
+          if (active.cancelRequested && !active.cancelRecorded) {
+            await this.store.recordTurnCancelled(session.chatId)
+          }
+          this.activeTurns.delete(session.chatId)
+        }
+      }
+      session.session.close()
+      this.emitStateChange(session.chatId)
+    }
+  }
+
   async send(command: Extract<ClientCommand, { type: "chat.send" }>) {
     let chatId = command.chatId
 
@@ -2168,6 +2480,7 @@ export class AgentCoordinator {
         effort: command.effort,
         planMode: command.planMode,
         autoPlan: command.autoPlan,
+        collaboration: command.collaboration,
       })
       return { chatId, queuedMessageId: queuedMessage.id, queued: true as const }
     }
@@ -2186,6 +2499,8 @@ export class AgentCoordinator {
       planMode: settings.planMode,
       autoPlan: settings.autoPlan,
       appendUserPrompt: true,
+      collaboration: Boolean(command.collaboration) && engineSupportsCollaboration(provider),
+      collaborationPhase: "implement",
     })
 
 
@@ -2200,6 +2515,7 @@ export class AgentCoordinator {
       modelOptions: command.modelOptions,
       planMode: command.planMode,
       autoPlan: command.autoPlan,
+      collaboration: command.collaboration,
     })
     return { queuedMessageId: queuedMessage.id }
   }
@@ -2279,30 +2595,11 @@ export class AgentCoordinator {
             // Session mid-shutdown or old CLI — fall through to the scan.
           }
         }
-        if (command.provider === "deepseek") {
-          // 没有活动会话时：合并项目/用户 skills 与 ccb 内置命令，让
-          // 命令面在任何时候都完整可浏览（命令优先，同名 skill 去重）。
-          const seen = new Set<string>(CCB_BUILTIN_COMMANDS)
-          const skills: HarnessSkill[] = CCB_BUILTIN_COMMANDS.map((name) => ({
-              name,
-              description: "",
-              source: "command" as const,
-            }))
-          const pushSkills = (scanned: HarnessSkill[]) => {
-            for (const skill of scanned) {
-              if (seen.has(skill.name)) continue
-              seen.add(skill.name)
-              skills.push(skill)
-            }
-          }
-          pushSkills(scanClaudeSkills({ cwd }))
-          // 设置页安装的技能落在 ~/.agents/skills，冷启动也扫描它。
-          pushSkills(scanSkillsRoot(path.join(homedir(), ".agents", "skills")))
-          // 插件技能同步进 ccb 的 skills 目录，冷启动同样可见。
-          pushSkills(scanSkillsRoot(path.join(getClaudeConfigDir(homedir()), "skills")))
-          return { provider: "deepseek", skills, origin: "filesystem" }
+        return {
+          provider: command.provider,
+          skills: listFilesystemSkills(command.provider, cwd),
+          origin: "filesystem",
         }
-        return { provider: "claude", skills: scanClaudeSkills({ cwd }), origin: "filesystem" }
       }
       case "codex": {
         const live = command.chatId
@@ -2317,33 +2614,23 @@ export class AgentCoordinator {
           }))
           return { provider: "codex", skills, origin: "live" }
         }
-        return { provider: "codex", skills: scanCodexSkills({ cwd }), origin: "filesystem" }
+        return { provider: "codex", skills: listFilesystemSkills("codex", cwd), origin: "filesystem" }
       }
       case "cursor":
         // Cursor has no enumeration protocol; the scan mirrors the CLI's own
         // skill discovery roots, and invocation is failsafe-only by design.
-        return { provider: "cursor", skills: scanCursorSkills({ cwd }), origin: "filesystem" }
+        return { provider: "cursor", skills: listFilesystemSkills("cursor", cwd), origin: "filesystem" }
       case "pi": {
         const skills = await this.piManager.listSkills({ chatId: command.chatId, cwd })
         return { provider: "pi", skills, origin: "live" }
       }
-      case "reasonix": {
-        // Reasonix 的 slash/skill 由引擎侧的 use_capability 展开；命令菜单
-        // 复用与 deepseek 相同的文件系统扫描，保证冷启动也能浏览。
-        const seen = new Set<string>()
-        const skills: HarnessSkill[] = []
-        const pushSkills = (scanned: HarnessSkill[]) => {
-          for (const skill of scanned) {
-            if (seen.has(skill.name)) continue
-            seen.add(skill.name)
-            skills.push(skill)
-          }
+      case "reasonix":
+      case "youmi":
+        return {
+          provider: command.provider,
+          skills: listFilesystemSkills(command.provider, cwd),
+          origin: "filesystem",
         }
-        pushSkills(scanClaudeSkills({ cwd }))
-        pushSkills(scanSkillsRoot(path.join(homedir(), ".agents", "skills")))
-        pushSkills(scanSkillsRoot(path.join(getClaudeConfigDir(homedir()), "skills")))
-        return { provider: "reasonix", skills, origin: "filesystem" }
-      }
     }
   }
 
@@ -2532,10 +2819,13 @@ export class AgentCoordinator {
             await this.store.recordTurnFailed(session.chatId, event.entry.result || "Turn failed")
           } else if (!active.cancelRequested) {
             await this.store.recordTurnFinished(session.chatId)
+            persistTurnMemoryFromChat(this.store, session.chatId)
+            active.turnSucceeded = true
           }
           this.activeTurns.delete(session.chatId)
           if (!active.cancelRequested) {
-            await this.maybeStartNextQueuedMessage(session.chatId)
+            if (active.turnSucceeded) await this.continueAfterSuccessfulTurn(session.chatId, active)
+            else await this.maybeStartNextQueuedMessage(session.chatId)
           }
         }
 
@@ -2641,15 +2931,21 @@ export class AgentCoordinator {
             await this.store.recordTurnFailed(active.chatId, event.entry.result || "Turn failed")
           } else if (!active.cancelRequested) {
             await this.store.recordTurnFinished(active.chatId)
+            persistTurnMemoryFromChat(this.store, active.chatId)
+            active.turnSucceeded = true
           }
           // Remove from activeTurns as soon as the result arrives so the UI
           // transitions to idle immediately. The stream may still be open
           // (e.g. background tasks), but the user should be able to send
           // new messages without having to hit stop first.
           this.activeTurns.delete(active.chatId)
-          // Track the still-open stream so the UI can show a draining
-          // indicator and the user can stop background tasks.
-          this.drainingStreams.set(active.chatId, { turn: active.turn })
+          // Codex app-server can keep working after the result (background
+          // tasks). Cursor is one process per turn — leaving it in draining
+          // would keep the transcript spinner on 「运行中」 forever if the
+          // CLI doesn't exit.
+          if (active.provider === "codex") {
+            this.drainingStreams.set(active.chatId, { turn: active.turn })
+          }
         }
 
         this.emitStateChange(active.chatId)
@@ -2700,6 +2996,9 @@ export class AgentCoordinator {
             // Codex-only path; carry the turn's mode through unchanged.
             autoPlan: active.autoPlan,
             appendUserPrompt: false,
+            collaboration: active.collaboration,
+            collaborationPhase: active.collaborationPhase,
+            collaborationAttempts: active.collaborationAttempts,
           })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -2718,7 +3017,8 @@ export class AgentCoordinator {
         }
       } else if (!active.cancelRequested) {
         try {
-          await this.maybeStartNextQueuedMessage(active.chatId)
+          if (active.turnSucceeded) await this.continueAfterSuccessfulTurn(active.chatId, active)
+          else await this.maybeStartNextQueuedMessage(active.chatId)
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           await this.store.appendMessage(

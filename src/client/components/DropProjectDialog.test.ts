@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { extractDroppedFolder, isNameOnlyPath, isWindowsNameOnlyPath, normalizeDroppedPath, parseFileUri } from "./DropProjectDialog"
+import { autoFillFromNameLookup, extractDroppedFolder, isNameOnlyPath, isWindowsNameOnlyPath, normalizeDroppedPath, parseFileUri } from "./DropProjectDialog"
 
 function fakeDataTransfer(options: {
   directoryFullPath?: string | null
@@ -172,5 +172,22 @@ describe("extractDroppedFolder", () => {
     expect(result.path).toBeNull()
     expect(result.openManual).toBe(true)
     expect(result.notice).toContain("手动填写")
+  })
+})
+
+describe("autoFillFromNameLookup", () => {
+  test("fills the first match and keeps the rest as alternatives", () => {
+    expect(autoFillFromNameLookup([])).toEqual({ path: null, alternatives: [] })
+    expect(autoFillFromNameLookup(["C:\\Users\\me\\Desktop\\Dumper-7-main"])).toEqual({
+      path: "C:\\Users\\me\\Desktop\\Dumper-7-main",
+      alternatives: [],
+    })
+    expect(autoFillFromNameLookup([
+      "C:\\Users\\me\\Desktop\\Dumper-7-main",
+      "C:\\Users\\me\\Downloads\\Dumper-7-main",
+    ])).toEqual({
+      path: "C:\\Users\\me\\Desktop\\Dumper-7-main",
+      alternatives: ["C:\\Users\\me\\Downloads\\Dumper-7-main"],
+    })
   })
 })

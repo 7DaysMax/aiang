@@ -44,6 +44,55 @@ describe("processTranscriptMessages", () => {
     expect(messages[2].text).toBe("另一个步骤")
   })
 
+  test("merges consecutive thinking entries that have no messageId", () => {
+    const messages = processTranscriptMessages([
+      entry({ kind: "thinking", text: "先看" }),
+      entry({ kind: "thinking", text: "需求" }),
+      entry({ kind: "thinking", text: "再动手" }),
+      entry({ kind: "assistant_text", text: "好的" }),
+    ])
+
+    expect(messages).toHaveLength(2)
+    expect(messages[0]?.kind).toBe("assistant_thinking")
+    if (messages[0]?.kind !== "assistant_thinking") throw new Error("unexpected message")
+    expect(messages[0].text).toBe("先看需求再动手")
+    expect(messages[1]?.kind).toBe("assistant_text")
+  })
+
+  test("does not merge thinking fragments across a tool call", () => {
+    const messages = processTranscriptMessages([
+      entry({ kind: "thinking", text: "先读文件" }),
+      entry({
+        kind: "tool_call",
+        tool: {
+          kind: "tool",
+          toolKind: "bash",
+          toolName: "Bash",
+          toolId: "tool-1",
+          input: { command: "pwd" },
+        },
+      }),
+      entry({ kind: "thinking", text: "再改" }),
+    ])
+
+    expect(messages.map((message) => message.kind)).toEqual(["assistant_thinking", "tool", "assistant_thinking"])
+    expect(messages[0]?.kind === "assistant_thinking" && messages[0].text).toBe("先读文件")
+    expect(messages[2]?.kind === "assistant_thinking" && messages[2].text).toBe("再改")
+  })
+
+  test("hydrates collaboration review cards", () => {
+    const messages = processTranscriptMessages([
+      entry({ kind: "collaboration_review", verdict: "fail", summary: "FAIL\n缺测试" }),
+    ])
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      kind: "collaboration_review",
+      verdict: "fail",
+      summary: "FAIL\n缺测试",
+    })
+  })
+
   test("keeps separate messages when messageIds differ", () => {
     const messages = processTranscriptMessages([
       entry({ kind: "assistant_text", messageId: "a", text: "one" }),

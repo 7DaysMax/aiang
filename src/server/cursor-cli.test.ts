@@ -144,17 +144,21 @@ function makeFakeChild() {
   const stdout = new PassThrough()
   const stderr = new PassThrough()
   let onClose: ((code: number | null) => void) | undefined
+  let killed = 0
   const child = {
     stdin,
     stdout,
     stderr,
-    kill: () => true,
+    kill: () => {
+      killed += 1
+      return true
+    },
     once(event: "close" | "error", listener: (arg: never) => void) {
       if (event === "close") onClose = listener as unknown as (code: number | null) => void
       return child
     },
   } as unknown as CursorChildProcess
-  return { child, stdin, stdout, stderr, close: (code: number | null) => onClose?.(code) }
+  return { child, stdin, stdout, stderr, killed: () => killed, close: (code: number | null) => onClose?.(code) }
 }
 
 describe("CursorCliManager.startTurn", () => {
@@ -203,6 +207,44 @@ describe("CursorCliManager.startTurn", () => {
     fake.stdout.end()
     fake.close(0)
     expect((await iter.next()).done).toBe(true)
+  })
+
+  test("ends the stream on result even if the CLI process never exits", async () => {
+    const fake = makeFakeChild()
+    const manager = new CursorCliManager({ spawnProcess: () => fake.child })
+    const turn = await manager.startTurn({ cwd: "/repo", content: "hi", model: "composer-2.5", sessionToken: null })
+    const iter = turn.stream[Symbol.asyncIterator]()
+
+    fake.stdout.write(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}]},"session_id":"s"}\n`)
+    fake.stdout.write(`{"type":"result","subtype":"success","is_error":false,"duration_ms":7000,"result":"ok","session_id":"s"}\n`)
+
+    expect((await iter.next()).value).toMatchObject({ type: "transcript", entry: { kind: "assistant_text", text: "done" } })
+    expect((await iter.next()).value).toMatchObject({ type: "transcript", entry: { kind: "result", isError: false } })
+    expect((await iter.next()).done).toBe(true)
+    expect(fake.killed()).toBeGreaterThan(0)
+  })
+
+  test("stamps a stable messageId on thinking deltas so the UI can merge them", async () => {
+    const fake = makeFakeChild()
+    const manager = new CursorCliManager({ spawnProcess: () => fake.child })
+    const turn = await manager.startTurn({ cwd: "/repo", content: "hi", model: "composer-2.5", sessionToken: null })
+    const iter = turn.stream[Symbol.asyncIterator]()
+
+    fake.stdout.write(`{"type":"thinking","subtype":"delta","text":"先看"}\n`)
+    fake.stdout.write(`{"type":"thinking","subtype":"delta","text":"需求"}\n`)
+    fake.stdout.write(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"好的"}]},"session_id":"s"}\n`)
+    fake.stdout.write(`{"type":"result","subtype":"success","is_error":false,"result":"done","session_id":"s"}\n`)
+
+    const first = (await iter.next()).value as { type: string; entry: { kind: string; text: string; messageId?: string } }
+    const second = (await iter.next()).value as { type: string; entry: { kind: string; text: string; messageId?: string } }
+    const third = (await iter.next()).value as { type: string; entry: { kind: string; text: string; messageId?: string } }
+    expect(first).toMatchObject({ type: "transcript", entry: { kind: "thinking", text: "先看" } })
+    expect(second).toMatchObject({ type: "transcript", entry: { kind: "thinking", text: "需求" } })
+    expect(first.entry.messageId).toBeTruthy()
+    expect(first.entry.messageId).toBe(second.entry.messageId)
+    expect(third).toMatchObject({ type: "transcript", entry: { kind: "assistant_text", text: "好的" } })
+    expect(third.entry.messageId).toBeTruthy()
+    expect(third.entry.messageId).not.toBe(first.entry.messageId)
   })
 
   test("synthesizes an error result (with stderr) when the process ends without one", async () => {

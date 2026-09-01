@@ -8,6 +8,7 @@ import { asNumber, asRecord, asString } from "../shared/json"
 import { normalizeToolCall } from "../shared/tools"
 import type { HarnessEvent, HarnessTurn } from "./harness-types"
 import { AsyncQueue } from "./async-queue"
+import { argvForNativeCli, resolveCursorAgentPath } from "./process-utils"
 import { timestamped } from "./transcript"
 
 /**
@@ -36,9 +37,30 @@ export interface CursorChildProcess {
   readonly stdin: Writable | null
   readonly stdout: Readable | null
   readonly stderr: Readable | null
+  readonly pid?: number
   kill(signal?: NodeJS.Signals): boolean
   once(event: "close", listener: (code: number | null) => void): unknown
   once(event: "error", listener: (err: Error) => void): unknown
+}
+
+/** cursor-agent is one-shot per turn; after `result` it often lingers (especially via cmd.exe on Windows). */
+function stopCursorChild(child: CursorChildProcess) {
+  if (process.platform === "win32" && typeof child.pid === "number") {
+    try {
+      spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+        stdio: "ignore",
+        windowsHide: true,
+      })
+      return
+    } catch {
+      // fall through to kill()
+    }
+  }
+  try {
+    child.kill()
+  } catch {
+    // process already gone
+  }
 }
 
 export type SpawnCursorAgent = (args: { cwd: string; argv: string[] }) => CursorChildProcess
@@ -323,12 +345,16 @@ export class CursorCliManager {
   constructor(args: { spawnProcess?: SpawnCursorAgent } = {}) {
     this.spawnProcess =
       args.spawnProcess ??
-      (({ cwd, argv }) =>
-        spawn("cursor-agent", argv, {
+      (({ cwd, argv }) => {
+        const binary = resolveCursorAgentPath() ?? "cursor-agent"
+        const [command, ...commandArgv] = argvForNativeCli([binary, ...argv])
+        return spawn(command, commandArgv, {
           cwd,
           stdio: ["pipe", "pipe", "pipe"],
           env: process.env,
-        }) as unknown as CursorChildProcess)
+          windowsHide: true,
+        }) as unknown as CursorChildProcess
+      })
   }
 
   /**
@@ -396,6 +422,10 @@ export class CursorCliManager {
 
     const child = this.spawnProcess({ cwd: args.cwd, argv })
     const queue = new AsyncQueue<HarnessEvent>()
+    // cursor-agent 把思考/正文拆成很多短 delta，且不带稳定 id。同一轮里
+    // 共用一个 messageId，客户端才能合成一张「思考过程」卡片。
+    const thinkingMessageId = `cursor-thinking-${randomUUID()}`
+    const assistantMessageId = `cursor-text-${randomUUID()}`
 
     let sawResult = false
     let finished = false
@@ -424,10 +454,24 @@ export class CursorCliManager {
       const rl = createInterface({ input: child.stdout })
       rl.on("line", (line) => {
         for (const event of parseCursorLine(line, args.model)) {
-          if (event.type === "transcript" && event.entry?.kind === "result") {
-            sawResult = true
+          if (event.type === "transcript" && event.entry) {
+            if (event.entry.kind === "thinking") {
+              event.entry.messageId = thinkingMessageId
+            } else if (event.entry.kind === "assistant_text") {
+              event.entry.messageId = assistantMessageId
+            }
+            if (event.entry.kind === "result") {
+              sawResult = true
+            }
           }
           queue.push(event)
+        }
+        // Result is the end of a Cursor turn. Finish the stream immediately so
+        // the UI leaves 「运行中」 even if the CLI process hangs after printing it.
+        if (sawResult && !finished) {
+          finished = true
+          queue.finish()
+          stopCursorChild(child)
         }
       })
     }
@@ -453,18 +497,10 @@ export class CursorCliManager {
       provider: "cursor",
       stream: queue,
       interrupt: async () => {
-        try {
-          child.kill("SIGINT")
-        } catch {
-          // process already gone
-        }
+        stopCursorChild(child)
       },
       close: () => {
-        try {
-          child.kill()
-        } catch {
-          // process already gone
-        }
+        stopCursorChild(child)
       },
     }
   }

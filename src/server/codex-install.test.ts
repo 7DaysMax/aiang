@@ -9,13 +9,35 @@ import {
   codexPlatformAsset,
   describeCodexProbeFailure,
   detectCodex,
+  fetchCodexLatestVersion,
+  parseCodexReleaseTag,
   pickCodexExecutable,
   readCodexAuthSummary,
+  resetCodexLatestVersionCache,
 } from "./codex-install"
 import { resolveCcbExecutable } from "./deepseek-agent"
 import { createTestRouter } from "./ws-router.test"
 
 describe("codex install helpers", () => {
+  test("parseCodexReleaseTag extracts semver from GitHub tags", () => {
+    expect(parseCodexReleaseTag("rust-v0.47.0")).toBe("0.47.0")
+    expect(parseCodexReleaseTag("v0.47.0")).toBe("0.47.0")
+    expect(parseCodexReleaseTag("0.47.0")).toBe("0.47.0")
+    expect(parseCodexReleaseTag("nightly")).toBeNull()
+  })
+
+  test("fetchCodexLatestVersion reads the GitHub latest release tag", async () => {
+    resetCodexLatestVersionCache()
+    const latest = await fetchCodexLatestVersion(async () =>
+      Response.json({ tag_name: "rust-v0.47.0" }) as unknown as Response
+    )
+    expect(latest).toBe("0.47.0")
+    const cached = await fetchCodexLatestVersion(async () => {
+      throw new Error("should use cache")
+    })
+    expect(cached).toBe("0.47.0")
+  })
+
   test("aiangCodexBinary points into the app data bin dir", () => {
     expect(aiangCodexBinary()).toBe(path.join(homedir(), ".aiang", "bin", "codex"))
   })
@@ -167,6 +189,29 @@ describe("ws router codex commands", () => {
 
     expect(acksOf(ws)).toEqual([
       { v: 1, type: "ack", id: "install-1", result: { ok: true, message: "installed", version: "codex-cli 9.9.9", path: "/fake/codex" } },
+    ])
+  })
+
+  test("codex.install forwards force so an existing CLI can be upgraded", async () => {
+    const seen: Array<{ force?: boolean }> = []
+    const router = createTestRouter({
+      detectCodexImpl: async () => ({ installed: true, version: "0.1.0" }),
+      installCodexImpl: async (options) => {
+        seen.push(options ?? {})
+        return { ok: true, message: "upgraded", version: "0.47.0" }
+      },
+    } as never)
+    const ws = new FakeCodexWs()
+    router.handleOpen(ws as never)
+
+    await router.handleMessage(
+      ws as never,
+      JSON.stringify({ v: 1, type: "command", id: "upgrade-1", command: { type: "codex.install", force: true } })
+    )
+
+    expect(seen).toEqual([{ force: true }])
+    expect(acksOf(ws)).toEqual([
+      { v: 1, type: "ack", id: "upgrade-1", result: { ok: true, message: "upgraded", version: "0.47.0" } },
     ])
   })
 })

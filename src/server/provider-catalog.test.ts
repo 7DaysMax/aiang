@@ -5,6 +5,7 @@ import {
   applyCursorModels,
   applyPiFaveModels,
   cursorModelIdForOptions,
+  getVisibleProviders,
   normalizeClaudeModelOptions,
   normalizeCodexModelOptions,
   normalizeCursorModelOptions,
@@ -323,5 +324,17 @@ describe("provider catalog normalization", () => {
       { value: "sonnet[1m]", resolvedModel: "claude-sonnet-5[1m]", displayName: "Sonnet (1M context)", supportsEffort: true },
       { value: "nova", resolvedModel: "claude-nova-2", displayName: "Nova" },
     ])).toBe(false)
+  })
+
+  test("getVisibleProviders lists native engines then third-party including Pi", () => {
+    expect(getVisibleProviders().map((provider) => provider.id)).toEqual([
+      "claude",
+      "cursor",
+      "codex",
+      "youmi",
+      "deepseek",
+      "reasonix",
+      "pi",
+    ])
   })
 })

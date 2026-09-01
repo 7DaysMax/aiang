@@ -118,28 +118,28 @@ export function GitHubPublishModal({
       <DialogContent size="sm" className="max-w-[min(92vw,475px)]">
         <DialogBody className="space-y-2 px-4 pb-4 pt-4">
           <div className="space-y-1">
-            <DialogTitle>Push to GitHub</DialogTitle>
-            <DialogDescription>Create a GitHub repository from this local project using GitHub CLI.</DialogDescription>
+            <DialogTitle>推送到 GitHub</DialogTitle>
+            <DialogDescription>通过 GitHub CLI 用当前本地项目创建一个 GitHub 仓库。</DialogDescription>
           </div>
           {isLoadingInfo ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <LoaderCircle className="size-4 animate-spin" />
-              <span>Checking GitHub CLI…</span>
+              <span>正在检查 GitHub CLI…</span>
             </div>
           ) : info && !info.ghInstalled ? (
             <div className="space-y-2 text-sm text-muted-foreground">
-              <p>GitHub CLI is not installed.</p>
+              <p>未安装 GitHub CLI。</p>
               <div className="rounded-lg border border-border px-3 py-2 font-mono text-xs text-foreground">
                 brew install gh
               </div>
-              <p>Then run:</p>
+              <p>然后执行：</p>
               <div className="rounded-lg border border-border px-3 py-2 font-mono text-xs text-foreground">
                 gh auth login
               </div>
             </div>
           ) : info && !info.authenticated ? (
             <div className="space-y-2 text-sm text-muted-foreground">
-              <p>GitHub CLI is installed but not signed in.</p>
+              <p>已安装 GitHub CLI，但尚未登录。</p>
               <div className="rounded-lg border border-border px-3 py-2 font-mono text-xs text-foreground">
                 gh auth login
               </div>
@@ -149,7 +149,7 @@ export function GitHubPublishModal({
               <div className="space-y-2">
                 <Select value={owner} onValueChange={setOwner}>
                   <SelectTrigger className="pl-[11px] [&>span]:flex [&>span]:items-center [&>span]:gap-2">
-                    <SelectValue placeholder="Select owner" />
+                    <SelectValue placeholder="选择所属账号" />
                   </SelectTrigger>
                   <SelectContent>
                     {(info?.owners ?? []).map((candidate) => (
@@ -211,7 +211,7 @@ export function GitHubPublishModal({
                     value={description}
                     onChange={(event) => setDescription(event.target.value)}
                     rows={3}
-                    placeholder="Optional description"
+                    placeholder="仓库描述（可选）"
                     className="pl-9 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
                   />
                 </div>
@@ -219,19 +219,19 @@ export function GitHubPublishModal({
               <div className="space-y-2">
                 <Select value={visibility} onValueChange={(value) => setVisibility(value as "public" | "private")}>
                   <SelectTrigger className="pl-[11px] [&>span]:flex [&>span]:items-center [&>span]:gap-2">
-                    <SelectValue placeholder="Select visibility" />
+                    <SelectValue placeholder="选择可见性" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="private">
                       <span className="flex items-center gap-2">
                         <Lock className="size-4 text-muted-foreground" />
-                        <span className="pl-[1px]">Private</span>
+                        <span className="pl-[1px]">私有</span>
                       </span>
                     </SelectItem>
                     <SelectItem value="public">
                       <span className="flex items-center gap-2">
                         <Globe className="size-4 text-muted-foreground" />
-                        <span className="pl-[1px]">Public</span>
+                        <span className="pl-[1px]">公开</span>
                       </span>
                     </SelectItem>
                   </SelectContent>
@@ -242,16 +242,16 @@ export function GitHubPublishModal({
         </DialogBody>
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
-            Cancel
+            取消
           </Button>
           <Button size="sm" disabled={!canPublish} onClick={() => void handlePublish()}>
             {isPublishing ? (
               <>
                 <LoaderCircle className="mr-1.5 size-3.5 animate-spin" />
-                Publishing…
+                正在创建…
               </>
             ) : (
-              "Push to GitHub"
+              "推送到 GitHub"
             )}
           </Button>
         </DialogFooter>

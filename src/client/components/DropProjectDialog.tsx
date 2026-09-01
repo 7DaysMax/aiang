@@ -63,6 +63,12 @@ export function isWindowsNameOnlyPath(value: string): boolean {
   return /^[A-Za-z]:[\\/][^\\/]+$/.test(value.trim())
 }
 
+/** 按名找到完整路径后自动填第一条，其余留给用户切换。 */
+export function autoFillFromNameLookup(matches: string[]): { path: string | null; alternatives: string[] } {
+  const [path, ...alternatives] = matches
+  return { path: path ?? null, alternatives }
+}
+
 function pathBasename(localPath: string): string {
   return localPath.split(/[\\/]/).filter(Boolean).pop() ?? localPath
 }
@@ -260,8 +266,22 @@ export function DropProjectDialog({ state }: { state: KannaState }) {
       void state.socket.command<{ matches: string[] }>({ type: "fs.findFolderByName", name: lookupName })
         .then((result) => {
           if (cancelled) return
-          setSuggestions(result.matches)
-          setPathStatus(result.matches.length > 0 ? "ok" : "idle")
+          const { path: autoPath, alternatives } = autoFillFromNameLookup(result.matches)
+          if (autoPath) {
+            setPath(autoPath)
+            setLookupName(null)
+            setSuggestions(alternatives)
+            setPending((current) => current
+              ? {
+                  notice: alternatives.length > 0
+                    ? `已自动填入完整路径，还找到 ${alternatives.length} 个同名文件夹，点一下可切换`
+                    : null,
+                }
+              : current)
+            return
+          }
+          setSuggestions([])
+          setPathStatus("idle")
         })
         .catch(() => {
           if (cancelled) return
@@ -283,7 +303,7 @@ export function DropProjectDialog({ state }: { state: KannaState }) {
         .then(() => {
           if (cancelled) return
           setPathStatus("ok")
-          setSuggestions([])
+          setSuggestions((current) => current.filter((match) => match.toLocaleLowerCase() !== trimmed.toLocaleLowerCase()))
         })
         .catch(() => {
           if (cancelled) return
@@ -422,7 +442,7 @@ export function DropProjectDialog({ state }: { state: KannaState }) {
               ) : null}
               {suggestions.length > 0 ? (
                 <div className="flex flex-col gap-1">
-                  <p className="text-xs text-muted-foreground">在桌面/文档/下载等常用位置找到了同名文件夹：</p>
+                  <p className="text-xs text-muted-foreground">还找到这些同名文件夹，点一下可切换：</p>
                   {suggestions.map((suggestion) => (
                     <button
                       key={suggestion}

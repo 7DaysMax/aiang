@@ -18,9 +18,8 @@ function StepHeading({ title, description }: { title: string; description: strin
 }
 
 /**
- * Aiang 的首次引导只有一步：填入 DeepSeek API Key（保存在本机设置文件中）。
- * 密钥通过 settings.writeAppSettingsPatch 写入，聊天能力由内置引擎
- * （vendor/ccb/ccb-bin，claude-code-best 逆向版 CLI）在本机驱动。
+ * 首次引导：保存一份模型档案（默认按 DeepSeek 预设填）。
+ * Claude / Codex / Youmi / ccb 共用这份档案；Cursor 仍走原版登录。
  */
 export function SetupWizard() {
   const open = useProviderAuthStore((store) => store.setupWizardOpen)
@@ -60,8 +59,28 @@ export function SetupWizard() {
     setSaveError(null)
     try {
       const key = keyDraft.trim()
-      applyOptimisticPatch({ deepseekApiKey: key })
-      await socket.command({ type: "settings.writeAppSettingsPatch", patch: { deepseekApiKey: key } })
+      const profile = {
+        id: crypto.randomUUID(),
+        name: "DeepSeek",
+        presetId: "deepseek" as const,
+        protocol: "openai-compat" as const,
+        baseUrl: "https://api.deepseek.com",
+        apiKey: key,
+        modelId: "deepseek-v4-flash",
+      }
+      applyOptimisticPatch({
+        deepseekApiKey: key,
+        modelProfiles: [profile],
+        activeModelProfileId: profile.id,
+      })
+      await socket.command({
+        type: "settings.writeAppSettingsPatch",
+        patch: {
+          deepseekApiKey: key,
+          modelProfiles: [profile],
+          activeModelProfileId: profile.id,
+        },
+      })
       setStep("done")
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "保存失败，请重试。")
@@ -107,8 +126,8 @@ export function SetupWizard() {
           {step === "deepseek" ? (
             <>
               <StepHeading
-                title="配置 DeepSeek API Key"
-                description="在 platform.deepseek.com 创建 API Key 并粘贴到下面。密钥只保存在本机，所有对话通过内置引擎在本地运行。"
+                title="添加第一份模型档案"
+                description="先填一个 API Key。默认按 DeepSeek 官方接口建档，之后可在设置里改成任意中转或 Anthropic。"
               />
               <div className="mt-8 space-y-2">
                 <div className="relative">
@@ -138,7 +157,7 @@ export function SetupWizard() {
                   <p className="text-sm text-destructive">{saveError}</p>
                 ) : (
                   <p className="text-xs leading-5 text-muted-foreground">
-                    也可以在设置页或环境变量 <code className="rounded border border-border bg-muted px-1 py-0.5 font-mono text-[11px]">DEEPSEEK_API_KEY</code> 中随时修改。
+                    保存后会生成一份模型档案，Claude / Codex / Youmi 都会用它。Cursor 仍只走原版登录。
                   </p>
                 )}
               </div>
@@ -166,7 +185,7 @@ export function SetupWizard() {
                 </div>
                 <StepHeading
                   title="准备就绪"
-                  description="Aiang 已配置完成。随时可以在「设置 → 模型服务」里修改密钥和默认模型。"
+                  description="已写好第一份模型档案。随时可以在「设置 → 模型服务」里换网关或加新档案。"
                 />
               </div>
               <div className="mt-auto pt-10">

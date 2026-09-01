@@ -132,7 +132,10 @@ export function getSetupLaunchAction(
  * 机器上是否已配置 DeepSeek API Key（来源：应用设置快照）。
  */
 export function useHasDeepSeekKey(): boolean {
-  return Boolean(useAppSettingsStore((store) => store.settings?.deepseekApiKey))
+  return Boolean(useAppSettingsStore((store) => {
+    if (store.settings?.deepseekApiKey) return true
+    return store.settings?.modelProfiles?.some((profile) => profile.apiKey && profile.baseUrl && profile.modelId)
+  }))
 }
 
 /**

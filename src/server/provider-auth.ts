@@ -11,7 +11,11 @@ import {
   type ProviderAuthSnapshot,
 } from "../shared/types"
 import { compareVersions } from "./cli-runtime"
-import { resolveCommandPath as defaultResolveCommandPath } from "./process-utils"
+import {
+  argvForNativeCli,
+  ensureCursorAgentOnProcessPath,
+  resolveCommandPath as defaultResolveCommandPath,
+} from "./process-utils"
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -371,10 +375,13 @@ export class ProviderAuthManager {
   }
 
   private async doRefresh(options: { force?: boolean }) {
-    if (options.force) this.commandPaths.clear()
+    if (options.force) {
+      this.commandPaths.clear()
+      this.lastVersionCheckAt = null
+    }
     await Promise.all(AUTH_SERVICE_ORDER.map((service) => this.probeService(service)))
     this.lastStatusRefreshAt = this.now()
-    void this.checkLatestVersions().catch(() => undefined)
+    await this.checkLatestVersions().catch(() => undefined)
   }
 
   /** Force-probe one service (post login/install). */
@@ -533,17 +540,26 @@ export class ProviderAuthManager {
     this.deps.trackEvent?.("auth_cli_install_started", { service })
 
     try {
-      const command = this.installCommand(service)
-      // Prefer bash: on Debian/Ubuntu `sh` is dash, which chokes on bash-isms
-      // in the user's profile files ("source: not found") and buries the real
-      // installer error in noise.
-      const shell = this.resolvePath("bash") ? "bash" : "sh"
-      const result = await this.deps.exec([shell, "-lc", command], { timeoutMs: 10 * 60_000 })
-      if (result.code !== 0) {
-        throw new Error(truncateOutput(result.stderr || result.stdout) || `Installer exited with code ${result.code}`)
+      const platform = this.deps.platform ?? process.platform
+      if (service === "cursor" && platform === "win32") {
+        await this.installCursorWindows()
+      } else {
+        const command = this.installCommand(service)
+        // Prefer bash: on Debian/Ubuntu `sh` is dash, which chokes on bash-isms
+        // in the user's profile files ("source: not found") and buries the real
+        // installer error in noise.
+        const shell = this.resolvePath("bash") ? "bash" : "sh"
+        const result = await this.deps.exec([shell, "-lc", command], { timeoutMs: 10 * 60_000 })
+        if (result.code !== 0) {
+          throw new Error(truncateOutput(result.stderr || result.stdout) || `Installer exited with code ${result.code}`)
+        }
       }
       // Re-resolve the binary (fresh — the install may have added it to PATH).
       this.commandPaths.delete(CLI_BINARIES[service])
+      if (service === "cursor") {
+        this.commandPaths.delete("agent")
+        ensureCursorAgentOnProcessPath()
+      }
       this.lastVersionCheckAt = null
       this.patchService(service, { installState: "idle", installError: null })
       this.deps.trackEvent?.("auth_cli_install_succeeded", { service })
@@ -601,6 +617,28 @@ export class ProviderAuthManager {
       "mkdir -p \"$HOME/.local/bin\"",
       `cp "$tmp/gh_$(echo $ver | tr -d v)_linux_$arch/bin/gh" "$HOME/.local/bin/gh"`,
     ].join("\n")
+  }
+
+  /** Native Windows Cursor CLI: PowerShell installer, or `cursor-agent update` if already present. */
+  private async installCursorWindows(): Promise<void> {
+    const existing = this.resolvePath(CLI_BINARIES.cursor)
+    const argv = existing
+      ? [existing, "update"]
+      : [
+          "powershell.exe",
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          "irm 'https://cursor.com/install?win32=true' | iex",
+        ]
+    const result = await this.deps.exec(argv, { timeoutMs: 10 * 60_000 })
+    if (result.code !== 0) {
+      throw new Error(
+        truncateOutput(result.stderr || result.stdout)
+          || `Cursor installer exited with code ${result.code}`,
+      )
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1099,7 +1137,8 @@ function shellQuote(value: string): string {
 export function createProcessAuthDeps(): Pick<ProviderAuthManagerDeps, "exec" | "spawnStreaming" | "spawnPty"> {
   return {
     async exec(argv, opts) {
-      const proc = Bun.spawn(argv, {
+      const nativeArgv = argvForNativeCli(argv)
+      const proc = Bun.spawn(nativeArgv, {
         stdin: opts?.stdin !== undefined ? new TextEncoder().encode(opts.stdin) : "ignore",
         stdout: "pipe",
         stderr: "pipe",
@@ -1128,7 +1167,8 @@ export function createProcessAuthDeps(): Pick<ProviderAuthManagerDeps, "exec" | 
 
     spawnStreaming(argv, opts) {
       const listeners = new Set<(chunk: string) => void>()
-      const proc = Bun.spawn(argv, {
+      const nativeArgv = argvForNativeCli(argv)
+      const proc = Bun.spawn(nativeArgv, {
         stdin: "ignore",
         stdout: "pipe",
         stderr: "pipe",

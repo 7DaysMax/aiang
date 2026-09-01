@@ -187,35 +187,35 @@ export function MergeBranchModal({
       <DialogContent size="sm" className="max-w-[min(92vw,475px)]">
         <DialogBody className="flex min-h-0 flex-col gap-3 px-4 pb-4 pt-4">
           <div className="space-y-1">
-            <DialogTitle>Merge into {currentBranchName ?? "current branch"}</DialogTitle>
+            <DialogTitle>合并到 {currentBranchName ?? "当前分支"}</DialogTitle>
             <DialogDescription>
-              Choose a branch to continue.
+              选择一个要合并进来的分支。
             </DialogDescription>
           </div>
           <BranchSearchInput
             value={query}
             onChange={setQuery}
-            placeholder="Search branches"
+            placeholder="搜索分支"
           />
           <div className="max-h-[375px] space-y-3 overflow-y-auto pr-1">
             <BranchListSection
-              title="Default Branch"
+              title="默认分支"
               entries={visibleDefaultBranch ? [visibleDefaultBranch] : []}
-              emptyLabel="No default branch available."
+              emptyLabel="没有可用的默认分支。"
               selectedName={selectedName}
               onSelect={(entry) => setSelectedName(entry.name)}
             />
             <BranchListSection
-              title="Recent Branches"
+              title="最近使用"
               entries={visibleRecent}
-              emptyLabel="No recent branches."
+              emptyLabel="没有最近使用的分支。"
               selectedName={selectedName}
               onSelect={(entry) => setSelectedName(entry.name)}
             />
             <BranchListSection
-              title="Other Branches"
+              title="其他分支"
               entries={visibleOther}
-              emptyLabel="No other branches match this search."
+              emptyLabel="没有匹配该搜索的其他分支。"
               selectedName={selectedName}
               onSelect={(entry) => setSelectedName(entry.name)}
             />
@@ -223,12 +223,12 @@ export function MergeBranchModal({
           <div className="px-2">
             {!selectedEntry ? (
               <div className="text-sm text-muted-foreground">
-                Select a branch to preview the merge.
+                选择一个分支以预览合并结果。
               </div>
             ) : isPreviewLoading ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <LoaderCircle className="size-3.5 animate-spin" />
-                <span>Checking merge preview…</span>
+                <span>正在预览合并结果…</span>
               </div>
             ) : previewError ? (
               <div className="text-sm text-destructive">
@@ -254,7 +254,7 @@ export function MergeBranchModal({
               </div>
             ) : (
               <div className="text-sm text-muted-foreground">
-                Preview unavailable.
+                无法预览合并结果。
               </div>
             )}
           </div>
@@ -262,16 +262,16 @@ export function MergeBranchModal({
         <DialogFooter>
           <div className="flex min-w-0 w-full items-center justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
-              Cancel
+              取消
             </Button>
             <Button className="max-w-full min-w-0" size="sm" disabled={mergeDisabled} onClick={() => void handleMerge()}>
               {isMerging ? (
                 <>
                   <LoaderCircle className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                  Merging…
+                  正在合并…
                 </>
               ) : (
-                <span className="block max-w-full truncate">Merge</span>
+                <span className="block max-w-full truncate">合并</span>
               )}
             </Button>
           </div>

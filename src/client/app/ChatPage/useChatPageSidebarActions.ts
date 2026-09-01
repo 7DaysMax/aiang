@@ -326,6 +326,32 @@ export function useChatPageSidebarActions({
     }
   }, [dialog, refreshProjectGitSnapshot, state.socket])
 
+  const handleAcceptSnapshotBaseline = useCallback(async () => {
+    const chatId = activeChatIdRef.current
+    if (!chatId) return
+
+    const confirmed = await dialog.confirm({
+      title: "接受为基线",
+      description: "将当前文件状态设为新的基线，清空改动列表。之后只跟踪相对这一刻的新改动。此操作不会修改磁盘上的文件内容。",
+      confirmLabel: "接受为基线",
+    })
+    if (!confirmed) return
+
+    try {
+      await state.socket.command({
+        type: "chat.acceptSnapshotBaseline",
+        chatId,
+      })
+      refreshDiffs()
+    } catch (error) {
+      await dialog.alert({
+        title: "接受基线失败",
+        description: error instanceof Error ? error.message : String(error),
+        closeLabel: "OK",
+      })
+    }
+  }, [dialog, refreshDiffs, state.socket])
+
   const handleGetGitHubPublishInfo = useCallback(async () => {
     const chatId = activeChatIdRef.current
     if (!chatId) {
@@ -672,6 +698,7 @@ export function useChatPageSidebarActions({
     handleSyncBranch,
     handleGenerateCommitMessage,
     handleInitializeGit,
+    handleAcceptSnapshotBaseline,
     handleGetGitHubPublishInfo,
     handleCheckGitHubRepoAvailability,
     handleSetupGitHub,

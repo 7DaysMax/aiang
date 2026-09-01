@@ -20,6 +20,7 @@ import {
 } from "../../ui/context-menu"
 import { openContextMenuFromButton } from "../../open-external-menu"
 import { ThreadRow } from "./ThreadRow"
+import { GlideMenu } from "../../bui/GlideMenu"
 
 /**
  * Section header matching the Projects tab's collapsible project headers
@@ -223,9 +224,13 @@ function ThreadSectionsImpl({
       {pinnedGroups.map((group) => (
         <div key={group.key}>
           <SectionHeader label={group.heading} />
-          <div className="space-y-[2px] mb-3">
+          <GlideMenu
+            rowSelector="[data-row]"
+            highlightClassName="inset-x-0 rounded-[7px] bg-hover-2"
+            className="mb-3 flex flex-col gap-px"
+          >
             {group.threads.map(renderRow)}
-          </div>
+          </GlideMenu>
         </div>
       ))}
       {relevant.length > 0 ? (() => {
@@ -245,9 +250,13 @@ function ThreadSectionsImpl({
               }}
             />
             {isExpanded ? (
-              <div className="space-y-[2px] mb-3">
+              <GlideMenu
+                rowSelector="[data-row]"
+                highlightClassName="inset-x-0 rounded-[7px] bg-hover-2"
+                className="mb-3 flex flex-col gap-px"
+              >
                 {relevant.map(renderRow)}
-              </div>
+              </GlideMenu>
             ) : null}
           </div>
         )
@@ -265,9 +274,13 @@ function ThreadSectionsImpl({
               }}
             />
             {isExpanded ? (
-              <div className="space-y-[2px] mb-3">
+              <GlideMenu
+                rowSelector="[data-row]"
+                highlightClassName="inset-x-0 rounded-[7px] bg-hover-2"
+                className="mb-3 flex flex-col gap-px"
+              >
                 {bucket.threads.map(renderRow)}
-              </div>
+              </GlideMenu>
             ) : null}
           </div>
         )
@@ -282,7 +295,11 @@ function ThreadSectionsImpl({
               onToggle={() => toggleBucket("archived", false)}
             />
             {isExpanded ? (
-              <div className="space-y-[2px] mb-3">
+              <GlideMenu
+                rowSelector="[data-row]"
+                highlightClassName="inset-x-0 rounded-[7px] bg-hover-2"
+                className="mb-3 flex flex-col gap-px"
+              >
                 {sections.archived.map((thread) => (
                   <ThreadRow
                     key={thread.chatId}
@@ -305,7 +322,7 @@ function ThreadSectionsImpl({
                     onDeleteChat={onDeleteChat}
                   />
                 ))}
-              </div>
+              </GlideMenu>
             ) : null}
           </div>
         )

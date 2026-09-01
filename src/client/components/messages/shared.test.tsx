@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import Markdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { createMarkdownComponents, markdownComponents, OpenLocalLinkProvider } from "./shared"
+import { createMarkdownComponents, markdownComponents, OpenLocalLinkProvider, TranscriptMarkdown } from "./shared"
 
 describe("markdownComponents", () => {
   test("renders markdown headings with transcript-specific sizes and no bold weight", () => {
@@ -59,6 +59,30 @@ describe("markdownComponents", () => {
 
     expect(html).toContain("/Users/jake/Projects/kanna/src/client/app/App.tsx#L1")
     expect(html).not.toContain('target="_blank"')
+  })
+
+  test("renders fenced code with the Beautiful UI code block chrome", () => {
+    const html = renderToStaticMarkup(
+      <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+        {"```ts\nexport const n = 1\n```"}
+      </Markdown>
+    )
+
+    expect(html).toContain("data-bui-code-block")
+    expect(html).toContain("TypeScript")
+    expect(html).toContain("Copy")
+    expect(html).toContain("export")
+  })
+
+  test("virtually closes an unclosed fence while streaming so the caret stays in the code block", () => {
+    const html = renderToStaticMarkup(
+      <TranscriptMarkdown text={"Intro\n\n```ts\nconst a = 1"} streaming />
+    )
+
+    expect(html).toContain("data-bui-code-block")
+    expect(html).toContain("bg-accent")
+    expect(html).toContain("const")
+    expect(html).not.toContain("streaming-md")
   })
 
   test("renders local file links without browser target handling when provided by context", () => {

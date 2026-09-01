@@ -20,11 +20,13 @@ import type {
 } from "../shared/plugin"
 import {
   assertSafePluginName,
-  MARKETPLACE_MANIFEST_RELATIVE_PATHS,
+  findMarketplaceManifestFile,
+  findPluginManifestFile,
   parseMarketplaceManifest,
   parsePluginManifest,
-  PLUGIN_MANIFEST_RELATIVE_PATHS,
+  sanitizePluginName,
 } from "./plugin-manifest"
+import { YOUMI_SHIPPED_PLUGINS } from "./youmi-plugins"
 
 /** 插件安装根:~/.aiang/plugins。 */
 export function getPluginsDir(homeDir = os.homedir()): string {
@@ -54,6 +56,8 @@ export function parseInstalledPluginsLock(parsed: unknown, lockFilePath: string)
       installedAt: asString(p.installedAt),
       skills: Array.isArray(p.skills) ? p.skills.filter((s): s is string => typeof s === "string") : [],
       commands: Array.isArray(p.commands) ? p.commands.filter((c): c is string => typeof c === "string") : [],
+      tools: Array.isArray(p.tools) ? p.tools.filter((s): s is string => typeof s === "string") : [],
+      mcpServers: Array.isArray(p.mcpServers) ? p.mcpServers.filter((s): s is string => typeof s === "string") : [],
     }))
 }
 
@@ -73,23 +77,19 @@ function writeInstalledLock(plugins: InstalledPlugin[], homeDir = os.homedir()) 
 }
 
 export function listInstalledPlugins(homeDir = os.homedir()): PluginListSnapshot {
-  return { installed: readInstalledLock(homeDir), errors: [] }
+  return {
+    shipped: YOUMI_SHIPPED_PLUGINS,
+    installed: readInstalledLock(homeDir),
+    errors: [],
+  }
 }
 
 function findManifestFile(pluginRoot: string): string | null {
-  for (const relative of PLUGIN_MANIFEST_RELATIVE_PATHS) {
-    const candidate = path.join(pluginRoot, relative)
-    if (existsSync(candidate)) return candidate
-  }
-  return null
+  return findPluginManifestFile(pluginRoot)
 }
 
 function findMarketplaceFile(repoRoot: string): string | null {
-  for (const relative of MARKETPLACE_MANIFEST_RELATIVE_PATHS) {
-    const candidate = path.join(repoRoot, relative)
-    if (existsSync(candidate)) return candidate
-  }
-  return null
+  return findMarketplaceManifestFile(repoRoot)
 }
 
 async function runGit(args: string[], cwd: string): Promise<void> {
@@ -261,6 +261,8 @@ export async function installPluginFromMarketplace(request: InstallRequest): Pro
       installedAt: new Date().toISOString(),
       skills,
       commands: manifest.commands,
+      tools: manifest.tools.map((tool) => tool.name),
+      mcpServers: Object.keys(manifest.mcpServers),
     }
     const lock = readInstalledLock(homeDir).filter((p) => p.name !== pluginName)
     lock.push(installed)
@@ -269,6 +271,179 @@ export async function installPluginFromMarketplace(request: InstallRequest): Pro
   } finally {
     try {
       if (!request.marketplaceIsLocal) rmSync(tmpRoot, { recursive: true, force: true })
+    } catch {}
+  }
+}
+
+export function parseGithubPluginRepo(repo: string): { owner: string; name: string; url: string } {
+  const cleaned = repo.trim()
+    .replace(/^https?:\/\/github\.com\//i, "")
+    .replace(/\.git$/i, "")
+    .replace(/\/+$/, "")
+  const match = cleaned.match(/^([A-Za-z0-9][A-Za-z0-9._-]*)\/([A-Za-z0-9][A-Za-z0-9._-]*)$/)
+  if (!match?.[1] || !match[2] || match[1].includes("..") || match[2].includes("..")) {
+    throw new Error("GitHub 仓库格式应为 owner/repo。")
+  }
+  return {
+    owner: match[1],
+    name: match[2],
+    url: `https://github.com/${match[1]}/${match[2]}.git`,
+  }
+}
+
+function readPackageJson(pluginRoot: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(readFileSync(path.join(pluginRoot, "package.json"), "utf8"))
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
+/** 社区仓库若没有 plugin.json，用 package.json 合成一份 Youmi 清单。 */
+export function ensureYoumiPluginManifest(
+  pluginRoot: string,
+  fallbackName: string,
+  fallbackDescription = "",
+) {
+  const existing = findManifestFile(pluginRoot)
+  if (existing) return parsePluginManifest(readFileSync(existing, "utf8"))
+
+  const pkg = readPackageJson(pluginRoot)
+  const name = sanitizePluginName(typeof pkg.name === "string" ? pkg.name : fallbackName)
+  const description = typeof pkg.description === "string" && pkg.description.trim()
+    ? pkg.description.trim()
+    : fallbackDescription
+  const skills = existsSync(path.join(pluginRoot, "skills")) ? ["./skills"] : []
+  const mcpServers = pkg.mcpServers && typeof pkg.mcpServers === "object" && !Array.isArray(pkg.mcpServers)
+    ? pkg.mcpServers
+    : {}
+  const json = JSON.stringify({
+    name,
+    ...(typeof pkg.version === "string" ? { version: pkg.version } : {}),
+    ...(description ? { description } : {}),
+    skills,
+    mcpServers,
+  }, null, 2)
+  mkdirSync(path.join(pluginRoot, ".youmi-plugin"), { recursive: true })
+  writeFileSync(path.join(pluginRoot, ".youmi-plugin/plugin.json"), json, "utf8")
+  return parsePluginManifest(json)
+}
+
+function commitInstalledPlugin(
+  homeDir: string,
+  pluginName: string,
+  sourceDir: string,
+  source: PluginMarketplaceEntrySource,
+  manifest: ReturnType<typeof parsePluginManifest>,
+): InstalledPlugin {
+  const pluginsDir = getPluginsDir(homeDir)
+  mkdirSync(pluginsDir, { recursive: true })
+  const installDir = path.join(pluginsDir, pluginName)
+  if (existsSync(installDir)) rmSync(installDir, { recursive: true, force: true })
+  copyDir(sourceDir, installDir)
+  const skills = scanPluginSkills(installDir, manifest.skills)
+  syncPluginSkillsToCcb(pluginName, installDir, skills, homeDir)
+  const installed: InstalledPlugin = {
+    name: pluginName,
+    ...(manifest.version ? { version: manifest.version } : {}),
+    ...(manifest.description ? { description: manifest.description } : {}),
+    source,
+    installDir,
+    installedAt: new Date().toISOString(),
+    skills,
+    commands: manifest.commands,
+    tools: manifest.tools.map((tool) => tool.name),
+    mcpServers: Object.keys(manifest.mcpServers),
+  }
+  const lock = readInstalledLock(homeDir).filter((p) => p.name !== pluginName)
+  lock.push(installed)
+  writeInstalledLock(lock, homeDir)
+  return installed
+}
+
+/** 把一个插件目录装进 ~/.aiang/plugins（无 marketplace.json 的社区仓库也能装）。 */
+export function installPluginFromSourceDir(args: {
+  sourceDir: string
+  pluginName?: string
+  source: PluginMarketplaceEntrySource
+  homeDir?: string
+  description?: string
+}): InstalledPlugin {
+  const homeDir = args.homeDir ?? os.homedir()
+  const fallbackName = args.pluginName || path.basename(args.sourceDir)
+  const manifest = ensureYoumiPluginManifest(args.sourceDir, fallbackName, args.description ?? "")
+  return commitInstalledPlugin(homeDir, manifest.name, args.sourceDir, args.source, manifest)
+}
+
+/** 从 GitHub `owner/repo` 克隆并安装到 Youmi 插件目录。 */
+export async function installPluginFromGithub(args: {
+  repo: string
+  homeDir?: string
+  description?: string
+}): Promise<InstalledPlugin> {
+  const parsed = parseGithubPluginRepo(args.repo)
+  const homeDir = args.homeDir ?? os.homedir()
+  const tmpRoot = path.join(os.tmpdir(), `aiang-gh-${parsed.name}-${Date.now()}`)
+  try {
+    await runGit(["clone", "--depth", "1", parsed.url, tmpRoot], os.homedir())
+    return installPluginFromSourceDir({
+      sourceDir: tmpRoot,
+      pluginName: parsed.name,
+      source: { kind: "git", url: parsed.url },
+      homeDir,
+      description: args.description,
+    })
+  } finally {
+    try {
+      rmSync(tmpRoot, { recursive: true, force: true })
+    } catch {}
+  }
+}
+
+/** 把官方 MCP（npx stdio 或远程 HTTP）写成 Youmi 插件并挂到引擎。 */
+export function installMcpPlugin(args: {
+  name: string
+  description?: string
+  command?: string
+  mcpArgs?: string[]
+  url?: string
+  homeDir?: string
+}): InstalledPlugin {
+  const pluginName = sanitizePluginName(args.name)
+  if (!args.command && !args.url) {
+    throw new Error("MCP 插件需要 npx 命令或 HTTP 地址。")
+  }
+  const homeDir = args.homeDir ?? os.homedir()
+  const sourceDir = path.join(os.tmpdir(), `aiang-mcp-${pluginName}-${Date.now()}`)
+  mkdirSync(path.join(sourceDir, ".youmi-plugin"), { recursive: true })
+  const mcpServers = {
+    [pluginName]: args.url
+      ? { url: args.url }
+      : { command: args.command, args: args.mcpArgs ?? [] },
+  }
+  writeFileSync(
+    path.join(sourceDir, ".youmi-plugin/plugin.json"),
+    JSON.stringify({
+      name: pluginName,
+      description: args.description ?? "",
+      mcpServers,
+    }, null, 2),
+    "utf8",
+  )
+  try {
+    return installPluginFromSourceDir({
+      sourceDir,
+      pluginName,
+      source: args.url
+        ? { kind: "git", url: args.url }
+        : { kind: "npm", path: args.mcpArgs?.[1] ?? args.command },
+      homeDir,
+      description: args.description,
+    })
+  } finally {
+    try {
+      rmSync(sourceDir, { recursive: true, force: true })
     } catch {}
   }
 }

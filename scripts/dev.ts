@@ -13,11 +13,16 @@ const localHostname = getHostname()
 const devArgs = parseDevArgs(forwardedArgs, localHostname)
 const { clientPort, serverPort, serverArgs, share } = devArgs
 
+const allowedHosts = typeof devArgs.allowedHosts === "boolean"
+  ? String(devArgs.allowedHosts)
+  : JSON.stringify(devArgs.allowedHosts)
+
 const clientEnv = {
   ...process.env,
-  KANNA_DEV_ALLOWED_HOSTS: typeof devArgs.allowedHosts === "boolean"
-    ? String(devArgs.allowedHosts)
-    : JSON.stringify(devArgs.allowedHosts),
+  AIANG_DEV_ALLOWED_HOSTS: allowedHosts,
+  AIANG_DEV_BACKEND_TARGET_HOST: devArgs.backendTargetHost,
+  AIANG_DEV_BACKEND_PORT: String(serverPort),
+  KANNA_DEV_ALLOWED_HOSTS: allowedHosts,
   KANNA_DEV_BACKEND_TARGET_HOST: devArgs.backendTargetHost,
   KANNA_DEV_BACKEND_PORT: String(serverPort),
 }

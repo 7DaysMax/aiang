@@ -36,6 +36,9 @@ function expectedSettingsSnapshot(filePath: string, overrides: Partial<AppSettin
   },
   memoryEnabled: false,
   memoryMaxChats: 5,
+  thirdPartyAccess: "official",
+  activeModelProfileId: null,
+  modelProfiles: [],
   dockMetrics: {
     balance: true,
     cacheHitRate: true,
@@ -102,6 +105,15 @@ function expectedSettingsSnapshot(filePath: string, overrides: Partial<AppSettin
         planMode: false,
         autoPlan: false,
       },
+      youmi: {
+        model: "deepseek-v4-flash",
+        modelOptions: {
+          reasoningEffort: "max",
+          fastMode: false,
+        },
+        planMode: false,
+        autoPlan: false,
+      },
       pi: {
         model: "~anthropic/claude-fable-latest",
         modelOptions: {
@@ -112,7 +124,7 @@ function expectedSettingsSnapshot(filePath: string, overrides: Partial<AppSettin
       },
     },
     newSidebarEnabled: true,
-    newProjectsDirectory: "~/Kanna",
+    newProjectsDirectory: "~/YoumiAiagent",
     warning: null,
     filePathDisplay: filePath,
     ...overrides,
@@ -160,11 +172,11 @@ describe("readAppSettingsSnapshot", () => {
     expect(snapshot.warning).toContain("invalid JSON")
   })
 
-  test("newProjectsDirectory defaults to ~/Kanna, trims, and warns on invalid values", async () => {
+  test("newProjectsDirectory defaults to ~/YoumiAiagent, trims, and warns on invalid values", async () => {
     const filePath = await createTempFilePath()
 
     // Missing → default, no warning.
-    expect((await readAppSettingsSnapshot(filePath)).newProjectsDirectory).toBe("~/Kanna")
+    expect((await readAppSettingsSnapshot(filePath)).newProjectsDirectory).toBe("~/YoumiAiagent")
 
     // Custom value trims.
     await writeFile(filePath, JSON.stringify({ newProjectsDirectory: "  ~/Dev/Projects  " }), "utf8")
@@ -175,13 +187,13 @@ describe("readAppSettingsSnapshot", () => {
     // Wrong type → default + warning.
     await writeFile(filePath, JSON.stringify({ newProjectsDirectory: 42 }), "utf8")
     const invalid = await readAppSettingsSnapshot(filePath)
-    expect(invalid.newProjectsDirectory).toBe("~/Kanna")
+    expect(invalid.newProjectsDirectory).toBe("~/YoumiAiagent")
     expect(invalid.warning).toContain("newProjectsDirectory")
 
     // Empty string → default + warning.
     await writeFile(filePath, JSON.stringify({ newProjectsDirectory: "  " }), "utf8")
     const empty = await readAppSettingsSnapshot(filePath)
-    expect(empty.newProjectsDirectory).toBe("~/Kanna")
+    expect(empty.newProjectsDirectory).toBe("~/YoumiAiagent")
     expect(empty.warning).toContain("newProjectsDirectory")
   })
 

@@ -14,9 +14,9 @@ import {
 const ROW_WRAPPER_CLASS = "mx-auto max-w-[800px] pb-5"
 
 // Minimal test harness mirroring how ChatTranscriptViewport renders resolved rows.
-function TestTranscript({ messages }: { messages: HydratedTranscriptMessage[] }) {
+function TestTranscript({ messages, isLoading = false }: { messages: HydratedTranscriptMessage[]; isLoading?: boolean }) {
   const rows = buildResolvedTranscriptRows(messages, {
-    isLoading: false,
+    isLoading,
     latestToolIds: { AskUserQuestion: null, ExitPlanMode: null, TodoWrite: null },
   })
 
@@ -40,8 +40,8 @@ function TestTranscript({ messages }: { messages: HydratedTranscriptMessage[] })
   )
 }
 
-function renderTranscript(messages: HydratedTranscriptMessage[]) {
-  return renderToStaticMarkup(<TestTranscript messages={messages} />)
+function renderTranscript(messages: HydratedTranscriptMessage[], isLoading = false) {
+  return renderToStaticMarkup(<TestTranscript messages={messages} isLoading={isLoading} />)
 }
 
 function countRowWrappers(html: string) {
@@ -539,9 +539,55 @@ Please check the latest error first.`,
         text: "Still thinking…",
         timestamp: new Date().toISOString(),
       },
-    ])
+    ], true)
 
     expect(html).toContain("思考中")
+  })
+
+  test("keeps thinking live after tools start while the session is still generating", () => {
+    const html = renderTranscript([
+      {
+        id: "system-1",
+        kind: "system_init",
+        provider: "deepseek",
+        model: "deepseek-v4-flash",
+        tools: [],
+        agents: [],
+        slashCommands: [],
+        mcpServers: [],
+        timestamp: new Date().toISOString(),
+      },
+      {
+        id: "thinking-1",
+        kind: "assistant_thinking",
+        text: "Need to read the file first.",
+        timestamp: new Date().toISOString(),
+      },
+      createToolMessage("tool-1"),
+    ], true)
+
+    expect(html).toContain("思考中")
+    expect(html).not.toContain("思考过程")
+  })
+
+  test("settles thinking once the answer text arrives", () => {
+    const html = renderTranscript([
+      {
+        id: "thinking-1",
+        kind: "assistant_thinking",
+        text: "Need to read the file first.",
+        timestamp: new Date().toISOString(),
+      },
+      {
+        id: "text-1",
+        kind: "assistant_text",
+        text: "Done.",
+        timestamp: new Date().toISOString(),
+      },
+    ], true)
+
+    expect(html).toContain("思考过程")
+    expect(html).not.toContain("思考中")
   })
 
   test("shows the model header on assistant text without a thinking prefix", () => {
@@ -567,6 +613,21 @@ Please check the latest error first.`,
 
     expect(html).toContain("DeepSeek Pro")
     expect(html).toContain("Plain answer without thinking.")
+  })
+
+  test("renders a collaboration review card", () => {
+    const html = renderTranscript([
+      {
+        id: "review-1",
+        kind: "collaboration_review",
+        verdict: "fail",
+        summary: "FAIL\n缺测试",
+        timestamp: new Date().toISOString(),
+      },
+    ])
+
+    expect(html).toContain("验收未通过")
+    expect(html).toContain("缺测试")
   })
 
   test("labels the session init after a handoff with only the destination harness", () => {
@@ -829,9 +890,11 @@ Please check the latest error first.`,
 
     expect(initialHtml).toContain("Run tool-1")
     expect(initialHtml).toContain("Run tool-2")
+    expect(initialHtml).toContain("2 次工具调用")
     expect(updatedHtml).toContain("Run tool-1")
     expect(updatedHtml).toContain("Run tool-2")
     expect(updatedHtml).toContain("Run tool-3")
+    expect(updatedHtml).toContain("3 次工具调用")
   })
 
   test("reuses unchanged single row objects across streaming updates", () => {

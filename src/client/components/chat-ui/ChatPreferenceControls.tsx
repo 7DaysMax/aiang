@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react"
 import { Box, Brain, Gauge, ListTodo, LockOpen, Plus, Search, Sparkles, SquareMenu, SquareMinus } from "lucide-react"
+import { groupProvidersByFamily } from "../../../shared/engine-family"
 import {
   resolveModelLabel,
   type AgentProvider,
@@ -20,25 +21,26 @@ import { CHAT_MODE_LABELS, deriveComposerOptionControls } from "../../lib/compos
 import { cn } from "../../lib/utils"
 import type { ComposerState } from "../../stores/chatPreferencesStore"
 import { useCodexInstallStore } from "../../stores/codexInstallStore"
+import { useAuthService, useProviderAuthStore } from "../../stores/providerAuthStore"
 import { PROVIDER_ICONS } from "../provider-icons"
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover"
+import { ModelProfileSwitcher } from "./ModelProfileSwitcher"
 
 // Icons moved to components/provider-icons.tsx; re-exported for existing importers.
 export { PROVIDER_ICONS }
 
 /**
- * 底层驱动的专业叫法是 agent 引擎：DeepSeek 是模型，Claude Code / Codex 是
- * 引擎。Aiang 里 deepseek 通道 = 魔改 ccb（Claude Code 引擎）跑 DeepSeek
- * V4；claude 通道 = 官方 Claude Code 引擎（Anthropic 原版）；codex 通道 =
- * codex app-server 引擎跑 DeepSeek V4。
+ * 原生 = 官方原版引擎；第三方 = Youmi 一类自研/第三方 harness。
+ * Cursor 只走原版，不支持中转。
  */
 export const PROVIDER_ENGINE_LABELS: Partial<Record<AgentProvider, string>> = {
-  deepseek: "魔改 Claude Code 引擎",
-  reasonix: "Reasonix 引擎",
-  codex: "Codex 引擎",
-  claude: "官方 Claude Code 引擎 · Anthropic",
-  cursor: "Cursor 引擎",
-  pi: "Pi 引擎",
+  claude: "原版 Claude Code · 可用模型档案",
+  cursor: "原版 cursor-agent · 仅账号模型",
+  codex: "原版 Codex · 可用模型档案",
+  youmi: "第三方 · PenguinHarness",
+  deepseek: "第三方 · ccb",
+  reasonix: "第三方 · Reasonix",
+  pi: "第三方 · Pi",
 }
 
 /** Flush table-like row inside an InputPopover: flat edges, divider-separated. */
@@ -272,6 +274,8 @@ export function ChatPreferenceControls({
     : providerConfig?.label ?? selectedProvider
   const ProviderIcon = PROVIDER_ICONS[selectedProvider]
   const ModelIcon = Box
+  const cursorAuth = useAuthService("cursor")
+  const authSocket = useProviderAuthStore((store) => store.socket)
   // Central availability registry (shared with the command palette): which
   // option controls exist for this provider/model and their current values.
   // Only `provider` and `model`/`modelOptions` feed the non-mode controls; the
@@ -294,7 +298,7 @@ export function ChatPreferenceControls({
       ? { type: "claudeReasoningEffort", effort: effortId as ClaudeReasoningEffort }
       : selectedProvider === "pi"
         ? { type: "piReasoningEffort", effort: effortId as PiReasoningEffort }
-        : selectedProvider === "deepseek"
+        : selectedProvider === "deepseek" || selectedProvider === "reasonix" || selectedProvider === "youmi"
           ? { type: "deepseekReasoningEffort", effort: effortId as DeepSeekReasoningEffort }
           : { type: "codexReasoningEffort", effort: effortId as CodexReasoningEffort }
 
@@ -312,30 +316,55 @@ export function ChatPreferenceControls({
           // Amber = staged harness switch (applies on the next message).
           triggerClassName={providerSwitchPending ? "text-amber-500 dark:text-amber-400" : undefined}
         >
-          {(close) => availableProviders.map((provider) => {
-            const Icon = PROVIDER_ICONS[provider.id]
-            const codexDetected = useCodexInstallStore.getState().detected
-            const codexNotInstalled = provider.id === "codex" && codexDetected !== null && !codexDetected.installed
-            return (
-              <PopoverMenuItem
-                key={provider.id}
-                onClick={() => {
-                  if (codexNotInstalled) {
-                    void useCodexInstallStore.getState().install()
-                  } else {
-                    onProviderChange?.(provider.id)
-                  }
-                  close()
-                }}
-                selected={selectedProvider === provider.id}
-                icon={<Icon className="h-4 w-4 text-muted-foreground" />}
-                label={provider.label}
-                description={codexNotInstalled ? "未安装 · 点击一键安装" : PROVIDER_ENGINE_LABELS[provider.id]}
-              />
-            )
-          })}
+          {(close) => groupProvidersByFamily(availableProviders).map((group) => (
+            <div key={group.family}>
+              <div className="px-3 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                {group.label}
+              </div>
+              {group.providers.map((provider) => {
+                const Icon = PROVIDER_ICONS[provider.id]
+                const codexDetected = useCodexInstallStore.getState().detected
+                const codexNotInstalled = provider.id === "codex" && codexDetected !== null && !codexDetected.installed
+                const cursorNotInstalled = provider.id === "cursor" && (
+                  cursorAuth?.authStatus === "not_installed" || cursorAuth?.installed === false
+                )
+                const cursorSignedOut = provider.id === "cursor" && cursorAuth?.authStatus === "signed_out"
+                const notInstalled = codexNotInstalled || cursorNotInstalled
+                return (
+                  <PopoverMenuItem
+                    key={provider.id}
+                    onClick={() => {
+                      if (codexNotInstalled) {
+                        void useCodexInstallStore.getState().install()
+                      } else if (cursorNotInstalled) {
+                        void authSocket?.command({ type: "auth.install", service: "cursor" })
+                      } else {
+                        onProviderChange?.(provider.id)
+                      }
+                      close()
+                    }}
+                    selected={selectedProvider === provider.id}
+                    icon={<Icon className="h-4 w-4 text-muted-foreground" />}
+                    label={provider.label}
+                    description={
+                      notInstalled
+                        ? "未安装 · 点击一键安装"
+                        : cursorSignedOut
+                          ? "未登录 · 请先在设置中登录"
+                          : PROVIDER_ENGINE_LABELS[provider.id]
+                    }
+                    trailing={cursorSignedOut ? (
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-foreground">未登录</span>
+                    ) : undefined}
+                  />
+                )
+              })}
+            </div>
+          ))}
         </InputPopover>
       ) : null}
+
+      {showProviderPicker && selectedProvider !== "cursor" ? <ModelProfileSwitcher /> : null}
 
       <InputPopover
         open={modelPickerOpen}

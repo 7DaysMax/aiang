@@ -35,10 +35,11 @@ import {
   FilePlusCorner,
   FileX,
 } from "lucide-react"
-import { CopyButton } from "../ui/copy-button"
 import { cn } from "../../lib/utils"
 import { parseLocalFileLink } from "../../lib/pathUtils"
 import { useTranscriptRenderOptions } from "./render-context"
+import { CodeBlock, CodeBlockFromMarkdown } from "../bui/CodeBlock"
+import { prepareStreamingMarkdown, sameStreamingCode } from "../../lib/streamingMarkdown"
 
 export type OpenLocalLinkTarget = {
   path: string
@@ -154,7 +155,7 @@ export function ExpandableRow({ children, expandedContent, defaultExpanded = fal
           {children}
         </div>
         <ChevronRight
-          className={`h-4.5 w-4.5 text-muted-icon translate-y-[0.5px] transition-all duration-200 opacity-0 group-hover/expandable-row:opacity-100 ${expanded ? "rotate-90 opacity-100" : ""}`}
+          className={`h-4 w-4 text-muted-icon/70 translate-y-[0.5px] transition-all duration-200 ${expanded ? "rotate-90 text-muted-icon opacity-100" : "opacity-70 group-hover/expandable-row:opacity-100"}`}
         />
       </button>
       {expanded && expandedContent}
@@ -165,20 +166,14 @@ export function ExpandableRow({ children, expandedContent, defaultExpanded = fal
 // Code block for expanded content
 export function MetaCodeBlock({ label, children, copyText }: { label: ReactNode; children: ReactNode; copyText?: string }) {
   const textContent = copyText ?? extractText(children)
+  const filename = typeof label === "string" ? label : undefined
 
   return (
-    <div>
-      <span className="font-medium text-muted-foreground">{label}</span>
-      <div className="relative group/codeblock">
-        <pre className="my-1 max-h-64 w-full overflow-auto whitespace-pre-wrap break-all rounded-lg border border-border bg-zinc-50 p-2.5 text-xs font-mono leading-relaxed text-zinc-900 dark:bg-muted dark:text-foreground">
-          {children}
-        </pre>
-        <CopyButton
-          text={textContent}
-          className="absolute top-[4px] right-[4px] z-10 h-6.5 w-6.5 rounded-sm text-muted-foreground opacity-0 group-hover/codeblock:opacity-100 transition-opacity"
-          checkClassName="h-3.5 w-3.5 text-green-400"
-        />
-      </div>
+    <div className="flex flex-col gap-1.5">
+      {typeof label !== "string" ? (
+        <span className="font-medium text-ink-2">{label}</span>
+      ) : null}
+      <CodeBlock code={textContent} filename={filename} />
     </div>
   )
 }
@@ -225,6 +220,38 @@ function extractText(node: ReactNode): string {
   return ""
 }
 
+function getCodeClassName(node: ReactNode): string | undefined {
+  if (!node) return undefined
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = getCodeClassName(child)
+      if (found) return found
+    }
+    return undefined
+  }
+  if (isValidElement<{ className?: string; children?: ReactNode }>(node)) {
+    if (typeof node.props.className === "string" && /\blanguage-/.test(node.props.className)) {
+      return node.props.className
+    }
+    return getCodeClassName(node.props.children)
+  }
+  return undefined
+}
+
+type TranscriptMarkdownStream = {
+  streaming: boolean
+  streamingFence: boolean
+  openCode: string | null
+}
+
+const idleMarkdownStream: TranscriptMarkdownStream = {
+  streaming: false,
+  streamingFence: false,
+  openCode: null,
+}
+
+const TranscriptMarkdownStreamContext = createContext<TranscriptMarkdownStream>(idleMarkdownStream)
+
 type MarkdownChildNode = ReturnType<typeof Children.toArray>[number]
 
 function withChildClassName(node: MarkdownChildNode, className: string): MarkdownChildNode {
@@ -258,16 +285,15 @@ export const markdownComponents = {
     <h6 className="text-[16px] font-normal leading-tight mt-5 mb-3 first:mt-0 last:mb-0">{children}</h6>
   ),
 
-  pre: ({ children, ...props }: ComponentPropsWithoutRef<"pre">) => {
+  pre: ({ children }: ComponentPropsWithoutRef<"pre">) => {
+    const stream = useContext(TranscriptMarkdownStreamContext)
     const textContent = extractText(children)
+    const info = getCodeClassName(children)
+    const streaming = stream.streamingFence && stream.openCode != null && sameStreamingCode(textContent, stream.openCode)
 
     return (
-      <div className="relative overflow-x-auto max-w-full min-w-0 no-code-highlight group/pre">
-        <pre className="min-w-0 rounded-xl py-2.5 px-3.5 [.no-pre-highlight_&]:bg-background" {...props}>{children}</pre>
-        <CopyButton
-          text={textContent}
-          className="absolute top-[35px] -translate-y-[50%] -translate-x-[1px] rounded-md right-1.5 h-8 w-8 text-muted-foreground opacity-0 group-hover/pre:opacity-100 transition-opacity"
-        />
+      <div className="my-5 first:mt-0 last:mb-0 max-w-full min-w-0">
+        <CodeBlockFromMarkdown code={textContent} info={info} streaming={streaming} />
       </div>
     )
   },
@@ -405,15 +431,34 @@ const transcriptMarkdownComponents = createMarkdownComponents()
 // plugin array hoisted to module scope so streaming rerenders reuse the same
 // component types instead of remounting the rendered tree.
 /**
- * Memoized on `text` alone: parsing markdown is the most expensive thing the
- * transcript does per row, and the viewport re-renders on every scroll event.
- * Without this, scrolling a long chat re-parses every visible message per
- * frame, and a streaming answer re-parses its whole body on every token.
+ * Memoized on `text` + `streaming`: parsing markdown is the most expensive
+ * thing the transcript does per row, and the viewport re-renders on every
+ * scroll event. Without this, scrolling a long chat re-parses every visible
+ * message per frame, and a streaming answer re-parses its whole body on
+ * every token. While a turn is live we close unclosed fences so the committed
+ * prefix still renders, and the open code block keeps a caret.
  */
-export const TranscriptMarkdown = memo(function TranscriptMarkdown({ text }: { text: string }) {
+export const TranscriptMarkdown = memo(function TranscriptMarkdown({
+  text,
+  streaming = false,
+}: {
+  text: string
+  streaming?: boolean
+}) {
+  const prepared = prepareStreamingMarkdown(text, streaming)
+  const stream: TranscriptMarkdownStream = {
+    streaming,
+    streamingFence: prepared.streamingFence,
+    openCode: prepared.openCode,
+  }
+
   return (
-    <Markdown remarkPlugins={REMARK_PLUGINS} components={transcriptMarkdownComponents}>
-      {text}
-    </Markdown>
+    <TranscriptMarkdownStreamContext.Provider value={stream}>
+      <div className={streaming && !prepared.streamingFence ? "streaming-md" : undefined}>
+        <Markdown remarkPlugins={REMARK_PLUGINS} components={transcriptMarkdownComponents}>
+          {prepared.source}
+        </Markdown>
+      </div>
+    </TranscriptMarkdownStreamContext.Provider>
   )
 })

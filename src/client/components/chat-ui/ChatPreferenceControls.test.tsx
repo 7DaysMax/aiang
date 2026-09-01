@@ -103,4 +103,24 @@ describe("ChatPreferenceControls", () => {
     expect(html).toContain("Fable")
     expect(html).toContain("High")
   })
+
+  test("renders cursor model and fast-mode toggle", () => {
+    const html = renderToStaticMarkup(
+      <ChatPreferenceControls
+        availableProviders={PROVIDERS}
+        selectedProvider="cursor"
+        model="composer-2.5"
+        modelOptions={{ fastMode: true }}
+        onProviderChange={() => {}}
+        onModelChange={() => {}}
+        onModelOptionChange={() => {}}
+        includeMode={false}
+      />
+    )
+
+    expect(html).toContain("Cursor")
+    expect(html).toContain("Composer 2.5")
+    expect(html).toContain("快速")
+    expect(html).not.toContain("计划模式")
+  })
 })

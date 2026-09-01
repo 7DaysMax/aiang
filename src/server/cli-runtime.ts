@@ -292,7 +292,7 @@ function normalizeVersion(version: string) {
 }
 
 async function maybeSelfUpdate(_argv: string[], deps: CliRuntimeDeps) {
-  if (process.env.AIANG_DISABLE_SELF_UPDATE === "1") {
+  if (process.env.AIANG_DISABLE_SELF_UPDATE === "1" || process.env.KANNA_DISABLE_SELF_UPDATE === "1") {
     return null
   }
 

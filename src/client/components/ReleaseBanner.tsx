@@ -3,7 +3,7 @@ import { BarChart3, Bot, Cloud, Cpu, FolderTree, Image, Rocket, ShieldCheck, Wre
 import { Button } from "./ui/button"
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/dialog"
 
-/** Youmi V1 测试版发布时间（东八区）：2026-08-13 12:00。 */
+/** Youmi V1 推出时间（东八区）：2026-08-13 12:00。 */
 export const RELEASE_AT_MS = new Date("2026-08-13T12:00:00+08:00").getTime()
 /** 发布后横幅继续展示的天数，到期自动消失。 */
 const RELEASE_BANNER_LIFETIME_MS = 3 * 24 * 60 * 60 * 1000
@@ -12,23 +12,28 @@ const DISMISS_STORAGE_KEY = "youmi-release-banner-dismissed-day"
 const FEATURES: Array<{ icon: LucideIcon; title: string; description: string }> = [
   {
     icon: Cpu,
-    title: "原生 DeepSeek V4",
-    description: "1M 超长上下文，思考模式可选，缓存命中、余额、费用实时可见。",
+    title: "Youmi 编码引擎",
+    description: "默认用 Youmi 在本地项目里写代码、改文件、跑命令；思考与工具轨迹全程可见。",
   },
   {
     icon: Bot,
-    title: "多 Agent 引擎",
-    description: "Claude Code（原版 / 魔改）、Codex、Reasonix 一键切换，工具调用过程全程可视化。",
+    title: "卡住了能交接",
+    description: "同一条对话交给 Cursor / Codex，轨迹不断档，不用重讲一遍上下文。",
+  },
+  {
+    icon: Wrench,
+    title: "插件能挂上",
+    description: "MCP / GitHub 插件装完下一轮就能调，不是目录摆设。",
   },
   {
     icon: Image,
-    title: "MCP 识图",
-    description: "DeepSeek 是文本模型，贴图时自动调用千问 / GLM 视觉模型（可免费）把图片转成文字描述。",
+    title: "贴图也能看",
+    description: "对话里贴图会走视觉通道转成文字描述，再交给当前引擎继续改代码。",
   },
   {
     icon: BarChart3,
-    title: "会话分析",
-    description: "上下文窗口、缓存命中率、tokens、费用、运行时间，用量可按来源 / 类型统计。",
+    title: "会话与用量",
+    description: "上下文、tokens、费用、运行时间可按来源统计，账单按你自己的 Key 走。",
   },
   {
     icon: FolderTree,
@@ -36,19 +41,14 @@ const FEATURES: Array<{ icon: LucideIcon; title: string; description: string }> 
     description: "内置文件树（语法高亮、可直接编辑），改动审查（+/- 行），一键撤销，不依赖 git。",
   },
   {
-    icon: Wrench,
-    title: "技能市场",
-    description: "安装 GitHub 热门编程 / 逆向技能，自动注入 agent，开箱即用。",
-  },
-  {
     icon: Cloud,
     title: "Youmi Cloud",
-    description: "远程配对与隧道，随时连接你的电脑。",
+    description: "远程配对与隧道，随时连回你这台电脑。",
   },
   {
     icon: ShieldCheck,
     title: "本地优先",
-    description: "对话与用量日志全部保存在本地，可自由关闭匿名分析。",
+    description: "对话与用量日志保存在本地，可关闭匿名分析。欢迎把失败案例报过来。",
   },
 ]
 
@@ -81,9 +81,9 @@ function writeDismissedDay(value: string) {
 }
 
 /**
- * 顶部全宽公告横条：Youmi V1 测试版发布倒计时。
- * 发布前实时倒计时；发布后展示“已发布”；可关闭（发布前当天不再显示，发布后永久隐藏）；
- * 发布 3 天后自动消失。“查看详情”弹出 Youmi 功能介绍。
+ * 顶部全宽公告横条：Youmi V1 已经推出。
+ * 发布前实时倒计时；发布后展示“已经推出”；可关闭（发布前当天不再显示，发布后永久隐藏）；
+ * 发布 3 天后自动消失。“了解 Youmi”弹出产品介绍（不是模型/DP 宣传）。
  */
 export const ReleaseBanner = memo(function ReleaseBanner() {
   const [now, setNow] = useState(() => Date.now())
@@ -112,11 +112,11 @@ export const ReleaseBanner = memo(function ReleaseBanner() {
       <div className="relative z-40 flex h-9 shrink-0 items-center justify-center gap-2 border-b border-border bg-gradient-to-r from-logo/15 via-background to-logo/15 px-16">
         <Rocket className="size-4 shrink-0 text-logo" />
         <p className="min-w-0 truncate text-xs font-medium text-foreground">
-          <span className="font-semibold">Youmi V1 测试版</span>
+          <span className="font-semibold">Youmi V1</span>
           {released ? (
-            <span className="text-muted-foreground"> 已于 8月13日 12:00 正式发布 🎉</span>
+            <span className="text-muted-foreground"> 已经推出 🎉</span>
           ) : (
-            <span className="text-muted-foreground"> 将于 8月13日 12:00 发布 · {buildCountdownLabel(remaining)}</span>
+            <span className="text-muted-foreground"> 将于 8月13日 12:00 推出 · {buildCountdownLabel(remaining)}</span>
           )}
         </p>
         <Button
@@ -126,7 +126,7 @@ export const ReleaseBanner = memo(function ReleaseBanner() {
           className="h-auto shrink-0 p-0 text-xs text-primary underline-offset-4 hover:underline"
           onClick={() => setDetailsOpen(true)}
         >
-          查看详情
+          了解 Youmi
         </Button>
         <button
           type="button"
@@ -140,10 +140,10 @@ export const ReleaseBanner = memo(function ReleaseBanner() {
       <Dialog open={detailsOpen} onOpenChange={setDetailsOpen}>
         <DialogContent size="lg">
           <DialogHeader>
-            <DialogTitle>关于 Youmi</DialogTitle>
+            <DialogTitle>Youmi V1 已经推出</DialogTitle>
             <DialogDescription>
-              Youmi（原 Aiang）是一款原生支持 DeepSeek 的 AI 编程助手桌面应用。
-              它把 Claude Code / Codex 的 agent 能力装进现代中文界面，直接在本地项目里写代码、改文件、跑命令。
+              Youmi 是本地编码助手：默认用 Youmi 引擎写代码，工具以 MCP 挂上就能跑；
+              卡住了同一条轨迹交给 Cursor / Codex。模型 Key 你自己填，我们不卖模型。
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="grid gap-2.5 sm:grid-cols-2">
@@ -158,7 +158,7 @@ export const ReleaseBanner = memo(function ReleaseBanner() {
             ))}
           </DialogBody>
           <div className="border-t border-border px-5 py-3 text-center text-xs text-muted-foreground">
-            V1 测试版将于 8月13日 12:00 发布，敬请期待 🎉
+            {released ? "V1 已经推出。试用里踩到的坑，欢迎直接反馈。" : "V1 将于 8月13日 12:00 推出。"}
           </div>
         </DialogContent>
       </Dialog>

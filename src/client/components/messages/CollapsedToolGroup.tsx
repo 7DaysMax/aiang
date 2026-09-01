@@ -1,71 +1,11 @@
 import { useMemo } from "react"
-import { ChevronRight } from "lucide-react"
 import { ToolCallMessage } from "./ToolCallMessage"
 import { useToolPayloadPrefetch } from "./tool-payload-context"
-import { MetaRow, MetaLabel } from "./shared"
-import { AnimatedShinyText } from "../ui/animated-shiny-text"
+import { Shimmer } from "../bui/atoms/Shimmer"
+import { DiffChips } from "../bui/DiffChips"
+import { collectToolDiffChips } from "./toolChipPresentation"
 import type { ProcessedToolCall } from "./types"
 import type { HydratedTranscriptMessage } from "../../../shared/types"
-
-interface ToolCategory {
-  key: string
-  singular: string
-  plural: string
-}
-
-const TOOL_CATEGORIES: Record<string, ToolCategory> = {
-  read_file: { key: "read", singular: "read", plural: "reads" },
-  edit_file: { key: "edit", singular: "edit", plural: "edits" },
-  write_file: { key: "write", singular: "write", plural: "writes" },
-  delete_file: { key: "delete", singular: "delete", plural: "deletes" },
-  bash: { key: "bash", singular: "command", plural: "commands" },
-  grep: { key: "grep", singular: "search", plural: "searches" },
-  glob: { key: "glob", singular: "glob", plural: "globs" },
-  subagent_task: { key: "task", singular: "agent", plural: "agents" },
-  web_search: { key: "websearch", singular: "web search", plural: "web searches" },
-  web_fetch: { key: "webfetch", singular: "fetch", plural: "fetches" },
-  task_output: { key: "taskoutput", singular: "task output", plural: "task outputs" },
-  task_stop: { key: "taskstop", singular: "task stop", plural: "task stops" },
-  notify: { key: "notify", singular: "notification", plural: "notifications" },
-  cron_create: { key: "croncreate", singular: "cron job", plural: "cron jobs" },
-  cron_delete: { key: "crondelete", singular: "cron delete", plural: "cron deletes" },
-  cron_list: { key: "cronlist", singular: "cron list", plural: "cron lists" },
-  kill_shell: { key: "killshell", singular: "shell kill", plural: "shell kills" },
-  enter_plan_mode: { key: "plan", singular: "plan mode", plural: "plan modes" },
-  notebook_edit: { key: "notebook", singular: "notebook edit", plural: "notebook edits" },
-  skill: { key: "skill", singular: "skill", plural: "skills" },
-  todo_write: { key: "todo", singular: "todo update", plural: "todo updates" },
-}
-
-const OTHER_CATEGORY: ToolCategory = { key: "other", singular: "tool call", plural: "tool calls" }
-
-function getToolCategory(toolKind: string): ToolCategory {
-  return TOOL_CATEGORIES[toolKind] ?? OTHER_CATEGORY
-}
-
-function getToolGroupLabel(messages: HydratedTranscriptMessage[]): string {
-  const counts = new Map<string, { category: ToolCategory; count: number }>()
-  const order: string[] = []
-
-  for (const msg of messages) {
-    const toolKind = (msg as ProcessedToolCall).toolKind
-    const category = getToolCategory(toolKind)
-
-    const existing = counts.get(category.key)
-    if (existing) {
-      existing.count++
-    } else {
-      counts.set(category.key, { category, count: 1 })
-      order.push(category.key)
-    }
-  }
-
-  // Format as "N reads, M writes" in order of first appearance
-  return order.map(key => {
-    const { category, count } = counts.get(key)!
-    return `${count} ${count === 1 ? category.singular : category.plural}`
-  }).join(", ")
-}
 
 interface Props {
   messages: HydratedTranscriptMessage[]
@@ -76,74 +16,84 @@ interface Props {
 }
 
 export function CollapsedToolGroup({ messages, isLoading, localPath, expanded, onExpandedChange }: Props) {
-  const label = useMemo(() => getToolGroupLabel(messages), [messages])
-
-  // In progress = no result entry has arrived yet. Deliberately not "has no
-  // result payload": a finished call may leave its payload on the server.
-  const anyInProgress = messages.some(msg => {
-    const processed = msg as ProcessedToolCall
-    return processed.resultEntryId === undefined
-  })
-
+  const tools = messages as ProcessedToolCall[]
+  const anyInProgress = tools.some((message) => message.resultEntryId === undefined)
   const showLoadingState = anyInProgress && isLoading
+  const label = `${messages.length} 次工具调用`
+  const diffs = useMemo(() => collectToolDiffChips(tools), [tools])
 
-  // One request for the whole group: expanding it mounts every member at once,
-  // so warming them individually would be a burst of round trips.
   const prefetchPayloads = useToolPayloadPrefetch()
   const prefetchGroupPayloads = () => {
     const entryIds: Array<string | undefined> = []
-    for (const msg of messages) {
-      const processed = msg as ProcessedToolCall
-      if (processed.inputTrimmed) entryIds.push(processed.id)
-      if (processed.resultTrimmed) entryIds.push(processed.resultEntryId)
+    for (const message of tools) {
+      if (message.inputTrimmed) entryIds.push(message.id)
+      if (message.resultTrimmed) entryIds.push(message.resultEntryId)
     }
     if (entryIds.length > 0) prefetchPayloads(entryIds)
   }
 
   return (
-    <MetaRow className="w-full" onPointerEnter={prefetchGroupPayloads}>
-      <div className="flex flex-col w-full">
-        <button
-          onClick={() => onExpandedChange(!expanded)}
-          className={`group cursor-pointer grid grid-cols-[auto_1fr] items-center gap-1 text-sm ${!expanded && !showLoadingState ? "hover:opacity-60 transition-opacity" : ""}`}
+    <div className="w-full pb-1" onPointerEnter={prefetchGroupPayloads}>
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={() => onExpandedChange(!expanded)}
+        className="-mx-1.5 flex w-fit items-center gap-1.5 rounded-control px-1.5 py-1 text-[12.5px] text-ink-2 transition-colors duration-100 hover:bg-hover-2"
+      >
+        <svg
+          width="12"
+          height="12"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="transition-transform duration-200"
+          style={{ transform: expanded ? "rotate(0deg)" : "rotate(-90deg)" }}
         >
-          <div className="grid grid-cols-[auto_1fr] items-center gap-1.5">
-            <div className="w-5 h-5 relative flex items-center justify-center">
-              <ChevronRight
-                className={`h-4.5 w-4.5 text-muted-icon transition-all duration-200 ${expanded ? "rotate-90" : ""}`}
-              />
-            </div>
-            <MetaLabel className="text-left">
-              <AnimatedShinyText animate={showLoadingState}>{label}</AnimatedShinyText>
-            </MetaLabel>
-          </div>
-        </button>
-        {expanded && (
-          <div className="my-4 flex flex-col gap-3">
-            {messages.map(msg => (
-              <ToolCallMessage
-                key={msg.id}
-                message={msg as ProcessedToolCall}
-                isLoading={isLoading}
-                localPath={localPath}
-              />
-            ))}
-            {messages.length > 5 && (
-              <button
-                onClick={() => onExpandedChange(false)}
-                className="cursor-pointer grid grid-cols-[auto_1fr] items-center gap-1 text-xs hover:opacity-80 transition-opacity"
-              >
-                <div className="grid grid-cols-[auto_1fr] items-center gap-1.5">
-                  <div className="w-5 h-5 relative flex items-center justify-center">
-                    <ChevronRight className="h-4.5 w-4.5 text-muted-icon -rotate-90" />
-                  </div>
-                  <MetaLabel className="text-left">Collapse</MetaLabel>
-                </div>
-              </button>
-            )}
-          </div>
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+        {showLoadingState ? (
+          <Shimmer className="text-[12.5px] tabular-nums">{label}</Shimmer>
+        ) : (
+          <span className="tabular-nums">{label}</span>
         )}
+      </button>
+      <div
+        className="grid transition-[grid-template-rows,opacity] duration-300"
+        style={{
+          gridTemplateRows: expanded ? "1fr" : "0fr",
+          opacity: expanded ? 1 : 0,
+        }}
+      >
+        <div className="-mx-1 overflow-hidden px-1.5 pb-1">
+          {expanded ? (
+            <>
+              <div className="mt-1.5 flex flex-col gap-1">
+                {tools.map((message) => (
+                  <ToolCallMessage
+                    key={message.id}
+                    message={message}
+                    isLoading={isLoading}
+                    localPath={localPath}
+                  />
+                ))}
+              </div>
+              <DiffChips files={diffs} maxVisible={5} />
+              {messages.length > 5 ? (
+                <button
+                  type="button"
+                  onClick={() => onExpandedChange(false)}
+                  className="mt-1 -mx-1.5 flex w-fit items-center gap-1.5 rounded-control px-1.5 py-1 text-[12px] text-ink-3 transition-colors hover:bg-hover-2 hover:text-ink-2"
+                >
+                  收起
+                </button>
+              ) : null}
+            </>
+          ) : null}
+        </div>
       </div>
-    </MetaRow>
+    </div>
   )
 }

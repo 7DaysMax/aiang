@@ -119,6 +119,45 @@ describe("normalizeClaudeStreamMessage", () => {
     expect(entries[1]?.kind).toBe("assistant_text")
   })
 
+  test("surfaces SDK error.errors when result text is empty", () => {
+    const entries = normalizeClaudeStreamMessage({
+      type: "result",
+      uuid: "msg-err",
+      subtype: "error_during_execution",
+      is_error: true,
+      duration_ms: 12,
+      total_cost_usd: 0,
+      errors: ["Invalid API key · Please run /login"],
+    })
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0]).toMatchObject({
+      kind: "result",
+      subtype: "error",
+      isError: true,
+      result: "Invalid API key · Please run /login",
+    })
+  })
+
+  test("falls back to a readable message when SDK error has neither result nor errors", () => {
+    const entries = normalizeClaudeStreamMessage({
+      type: "result",
+      uuid: "msg-err-2",
+      subtype: "error_during_execution",
+      is_error: true,
+      duration_ms: 1,
+      total_cost_usd: 0,
+      errors: [],
+    })
+
+    expect(entries[0]).toMatchObject({
+      kind: "result",
+      isError: true,
+    })
+    if (entries[0]?.kind !== "result") throw new Error("unexpected entry")
+    expect(entries[0].result).toContain("回合执行失败")
+  })
+
   test("drops empty thinking blocks", () => {
     const entries = normalizeClaudeStreamMessage({
       type: "assistant",
@@ -2416,7 +2455,7 @@ describe("session restore on lost native session", () => {
     // the user's verbatim prompt.
     expect(prompts).toHaveLength(1)
     expect(prompts[0]).toContain("<handoff_transcript>")
-    expect(prompts[0]).toContain("restored from Kanna's saved transcript")
+    expect(prompts[0]).toContain("restored from Youmi's saved transcript")
     expect(prompts[0]).toContain("earlier question")
     expect(prompts[0]?.endsWith("continue please")).toBe(true)
     expect((store.messages[promptIndex] as { content: string }).content).toBe("continue please")
@@ -2512,6 +2551,65 @@ describe("session restore on lost native session", () => {
 
     expect(store.messages.filter((entry) => entry.kind === "session_restored")).toHaveLength(1)
     expect(sentContents[1]).toBe("and again")
+  })
+
+  test("after a successful collaborative turn, starts a same-engine review and records the verdict", async () => {
+    const sentContents: string[] = []
+    let turnIndex = 0
+    const fakeCodexManager = {
+      async startSession() {},
+      stopSession() {},
+      async startTurn(args: { content: string }): Promise<HarnessTurn> {
+        sentContents.push(args.content)
+        const index = turnIndex++
+        async function* stream() {
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "assistant_text",
+              text: index === 0 ? "改完了。" : "FAIL\nsrc/a.ts 缺导出",
+            }),
+          }
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "result",
+              subtype: "success",
+              isError: false,
+              durationMs: 0,
+              result: "",
+            }),
+          }
+        }
+        return { provider: "codex", stream: stream(), interrupt: async () => {}, close: () => {} }
+      },
+    }
+
+    const store = createFakeStore()
+    const coordinator = new AgentCoordinator({
+      store: store as never,
+      onStateChange: () => {},
+      codexManager: fakeCodexManager as never,
+    })
+
+    await coordinator.send({
+      type: "chat.send",
+      chatId: "chat-1",
+      provider: "codex",
+      content: "加一个导出",
+      model: "gpt-5.4",
+      collaboration: true,
+    })
+
+    await waitFor(() => store.messages.some((entry) => entry.kind === "collaboration_review"))
+
+    expect(sentContents).toHaveLength(2)
+    expect(sentContents[0]).toBe("加一个导出")
+    expect(sentContents[1]).toContain("你现在是验收员")
+    const review = store.messages.find((entry) => entry.kind === "collaboration_review")
+    expect(review).toMatchObject({ kind: "collaboration_review", verdict: "fail" })
+    if (review?.kind !== "collaboration_review") throw new Error("expected collaboration_review")
+    expect(review.summary).toContain("缺导出")
   })
 })
 
@@ -2611,6 +2709,8 @@ function createFakeStore(options?: {
         model: message.model,
         modelOptions: message.modelOptions,
         planMode: message.planMode,
+        autoPlan: message.autoPlan,
+        collaboration: message.collaboration,
       }
       this.queuedMessages.push(queuedMessage)
       return queuedMessage

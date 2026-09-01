@@ -60,7 +60,7 @@ export function useSendMessage(params: {
 
   const handleSend = useCallback(async (
     content: string,
-    options?: { provider?: AgentProvider; model?: string; modelOptions?: ModelOptions; planMode?: boolean; autoPlan?: boolean; attachments?: ChatAttachment[] }
+    options?: { provider?: AgentProvider; model?: string; modelOptions?: ModelOptions; planMode?: boolean; autoPlan?: boolean; attachments?: ChatAttachment[]; collaboration?: boolean }
   ) => {
     const { isProcessing, optimisticUserPrompts, serverTranscriptEntries, sidebarProjectGroups, selectedProjectId, fallbackLocalProjectPath } = sendContextRef.current
     const attachments = options?.attachments ?? []
@@ -76,6 +76,7 @@ export function useSendMessage(params: {
           modelOptions: options?.modelOptions,
           planMode: options?.planMode,
           autoPlan: options?.autoPlan,
+          collaboration: options?.collaboration,
         })
         setCommandError(null)
         return
@@ -136,6 +137,7 @@ export function useSendMessage(params: {
         modelOptions: options?.modelOptions,
         planMode: options?.planMode,
         autoPlan: options?.autoPlan,
+        collaboration: options?.collaboration,
       })
       setOptimisticProcessing((current) => {
         if (!current) return current
@@ -155,6 +157,10 @@ export function useSendMessage(params: {
           result.chatId,
           composerStateFromSendOptions(options) ?? chatPreferences.getComposerState(NEW_CHAT_COMPOSER_ID)
         )
+        chatPreferences.copyChatCollaboration(NEW_CHAT_COMPOSER_ID, result.chatId)
+        if (options?.collaboration) {
+          chatPreferences.setChatCollaboration(result.chatId, true)
+        }
         setPendingChatId(result.chatId)
         navigate(`/chat/${result.chatId}`)
       }

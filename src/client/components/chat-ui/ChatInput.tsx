@@ -11,6 +11,7 @@ import {
   type ProviderCatalogEntry,
   type DeepSeekPromptOptimizeResult,
   resolveClaudeContextWindowMaxTokens,
+  resolveModelLabel,
 } from "../../../shared/types"
 import { Button } from "../ui/button"
 import { Textarea } from "../ui/textarea"
@@ -20,10 +21,12 @@ import { useComposer } from "../../hooks/useComposer"
 import { useIsStandalone } from "../../hooks/useIsStandalone"
 import { useChatInputStore } from "../../stores/chatInputStore"
 import { type ComposerState, useChatPreferencesStore } from "../../stores/chatPreferencesStore"
+import { engineSupportsCollaboration } from "../../../shared/collaboration"
 import { CHAT_INPUT_ATTRIBUTE, focusNextChatInput, REQUEST_ATTACH_FILES_EVENT } from "../../app/chatFocusPolicy"
 import { formatPathWithTilde } from "../../lib/pathUtils"
 import { useDeepSeekBalanceStore } from "../../stores/deepSeekBalanceStore"
 import { ChatPreferenceControls } from "./ChatPreferenceControls"
+import { CollaborationCoach } from "./CollaborationCoach"
 import { ContextWindowMeter } from "./ContextWindowMeter"
 import { AttachmentFileCard, AttachmentImageCard } from "../messages/AttachmentCard"
 import { AttachmentPreviewModal } from "../messages/AttachmentPreviewModal"
@@ -37,6 +40,7 @@ import {
   getActiveSlashQuery,
 } from "../../lib/skill-menu"
 import { getVirtualCommand, mergeVirtualSkillMenuItems, type VirtualCommand } from "../../lib/virtualCommands"
+import { COMPOSER_INSERT_EVENT, type ComposerInsertDetail } from "../../lib/composerInsert"
 
 const MAX_FILES_PER_DROP = 50
 const MAX_CONCURRENT_UPLOADS = 3
@@ -134,7 +138,7 @@ interface ComposerAttachment extends ChatAttachment {
 interface Props {
   onSubmit: (
     value: string,
-    options?: { provider?: AgentProvider; model?: string; modelOptions?: ModelOptions; planMode?: boolean; autoPlan?: boolean; attachments?: ChatAttachment[] }
+    options?: { provider?: AgentProvider; model?: string; modelOptions?: ModelOptions; planMode?: boolean; autoPlan?: boolean; attachments?: ChatAttachment[]; collaboration?: boolean }
   ) => Promise<void>
   onLayoutChange?: () => void
   onCancel?: () => void
@@ -203,6 +207,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   })
   const { composerChatId, providerSwitchPending, selectedProvider } = composer
   const providerPrefs = composer.effectiveState
+  const collaborationEnabled = useChatPreferencesStore((state) => Boolean(state.collaborationByChatId[composerChatId]))
+  const setChatCollaboration = useChatPreferencesStore((state) => state.setChatCollaboration)
   const showModePicker = composer.supportsPlanMode
   const [value, setValue] = useState(() => (chatId ? getDraft(chatId) : ""))
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -412,6 +418,22 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   useEffect(() => {
     latestChatIdRef.current = chatId ?? null
   }, [chatId])
+
+  useEffect(() => {
+    const onInsert = (event: Event) => {
+      const detail = (event as CustomEvent<ComposerInsertDetail>).detail
+      if (!detail?.text) return
+      const next = detail.replace ? detail.text : `${value}${value && !value.endsWith("\n") ? "\n" : ""}${detail.text}`
+      setValue(next)
+      if (chatId) setDraft(chatId, next)
+      requestAnimationFrame(() => {
+        autoResize()
+        textareaRef.current?.focus()
+      })
+    }
+    window.addEventListener(COMPOSER_INSERT_EVENT, onInsert)
+    return () => window.removeEventListener(COMPOSER_INSERT_EVENT, onInsert)
+  }, [chatId, setDraft, value])
 
   // The composer owns `value` and mirrors it into the store, so a draft cleared
   // from outside (the sidebar row's "Clear Draft") would otherwise leave the
@@ -690,6 +712,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       modelOptions = { pi: { ...providerPrefs.modelOptions } }
     } else if (providerPrefs.provider === "deepseek") {
       modelOptions = { deepseek: { ...providerPrefs.modelOptions } }
+    } else if (providerPrefs.provider === "reasonix") {
+      modelOptions = { reasonix: { ...providerPrefs.modelOptions } }
+    } else if (providerPrefs.provider === "youmi") {
+      modelOptions = { youmi: { ...providerPrefs.modelOptions } }
     } else {
       modelOptions = { codex: { ...providerPrefs.modelOptions } }
     }
@@ -700,6 +726,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       planMode: showModePicker ? providerPrefs.planMode : false,
       autoPlan: showModePicker ? providerPrefs.autoPlan : false,
       attachments: attachmentsForSubmit,
+      collaboration: engineSupportsCollaboration(selectedProvider) && collaborationEnabled,
     }
     setValue("")
     if (chatId) clearDraft(chatId)
@@ -858,7 +885,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         <div className="relative max-w-[840px] mx-auto rounded-[32px]">
           {skillMenuOpen ? (
             <div
-              className="absolute bottom-full left-0 right-0 mb-2 z-30 max-h-64 overflow-y-auto rounded-2xl border border-border bg-popover/95 backdrop-blur-lg shadow-lg py-1"
+              className="absolute inset-x-0 bottom-full z-30 mb-2 max-h-64 overflow-y-auto rounded-[10px] bg-surface p-1 shadow-raised"
+              style={{ animation: "pop-in 180ms cubic-bezier(0.23,1,0.32,1) both", transformOrigin: "bottom center" }}
               role="listbox"
               aria-label="技能"
             >
@@ -870,8 +898,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   role="option"
                   aria-selected={index === selectedSkillIndex}
                   className={cn(
-                    "flex w-full items-baseline gap-2 px-3 py-1.5 text-left text-sm",
-                    index === selectedSkillIndex ? "bg-accent text-accent-foreground" : "text-foreground"
+                    "relative z-10 flex h-9 w-full items-center gap-2.5 rounded-[6px] px-2 text-left",
+                    index === selectedSkillIndex ? "bg-hover" : "hover:bg-hover-2"
                   )}
                   onMouseEnter={() => setSkillMenuOffset(skillMenuItems.length - 1 - index)}
                   onMouseDown={(event) => {
@@ -920,68 +948,108 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             </ScrollArea>
           ) : null}
 
-          <div className="flex items-end max-w-[840px] mx-auto border dark:bg-card/40 backdrop-blur-lg border-border rounded-[29px] pr-1.5">
-            <Textarea
-              ref={setTextareaRefs}
-              placeholder={placeholder}
-              value={value}
-              autoFocus
-              {...{ [CHAT_INPUT_ATTRIBUTE]: "" }}
-              rows={1}
-              onChange={(event) => {
-                setValue(event.target.value)
-                setCaretPosition(event.target.selectionStart ?? event.target.value.length)
-                if (chatId) setDraft(chatId, event.target.value)
-                autoResize()
-              }}
-              onSelect={(event) => {
-                setCaretPosition(event.currentTarget.selectionStart ?? 0)
-              }}
-              onPaste={handlePaste}
-              onKeyDown={handleKeyDown}
-              disabled={disabled}
-              className="min-w-0 flex-1 text-base p-3 md:p-4 !pr-2 md:pl-6 resize-none max-h-[200px] outline-none bg-transparent border-0 shadow-none"
-            />
-            <Button
-              type="button"
-              onClick={() => void handleOptimizePrompt()}
-              disabled={disabled || !hasTextToSend || optimizingPrompt}
-              variant="ghost"
-              size="icon"
-              title={optimizingPrompt ? "正在优化…" : "优化提示词"}
-              aria-label="优化提示词"
-              className="flex-shrink-0 rounded-full cursor-pointer h-10 w-10 md:h-11 md:w-11 mb-1 touch-manipulation"
-            >
-              {optimizingPrompt ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <Sparkles className="h-5 w-5" />
-              )}
-            </Button>
-            <Button
-              type="button"
-              onPointerDown={(event) => {
-                event.preventDefault()
-                if (!disabled && hasTextToSend && !hasPendingUploads) {
-                  void handleSubmit()
-                } else if (canCancel) {
-                  onCancel?.()
-                } else if (!disabled && canSubmit && !hasPendingUploads) {
-                  void handleSubmit()
-                }
-              }}
-              disabled={disabled || (!canCancel && !canSubmit) || hasPendingUploads}
-              size="icon"
-              className="flex-shrink-0 bg-slate-600 text-white dark:bg-white dark:text-slate-900 rounded-full cursor-pointer h-10 w-10 md:h-11 md:w-11 mb-1 -mr-0.5 md:mr-0 md:mb-1.5 touch-manipulation disabled:bg-white/60 disabled:text-slate-700"
-            >
-              {hasTextToSend ? (
-                <ArrowUp className="h-5 w-5 md:h-6 md:w-6" />
-              ) : canCancel ? (
-                <div className="w-3 h-3 md:w-4 md:h-4 rounded-xs bg-current" />
-              ) : (
-                <ArrowUp className="h-5 w-5 md:h-6 md:w-6" />
-              )}
-            </Button>
+          <div className="relative isolate mx-auto flex max-w-[840px] flex-col overflow-hidden rounded-[14px] border border-line bg-surface p-1.5 shadow-card transition-[border-color] duration-150 focus-within:border-line-strong">
+            <div className="grid grid-cols-[28px_minmax(0,1fr)_auto_28px_28px] items-end gap-1">
+              <label
+                aria-label="添加附件"
+                className={cn(
+                  "relative flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-[8px] text-ink-3 transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-ink active:scale-[0.94]",
+                  disabled && "pointer-events-none opacity-70",
+                )}
+              >
+                <Paperclip className="h-4 w-4" />
+                <input
+                  type="file"
+                  multiple
+                  disabled={disabled}
+                  aria-label="添加附件"
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                  onChange={(event) => {
+                    const files = [...(event.target.files ?? [])]
+                    if (files.length > 0) enqueueFiles(files)
+                    event.target.value = ""
+                  }}
+                />
+              </label>
+              <Textarea
+                ref={setTextareaRefs}
+                placeholder={placeholder}
+                value={value}
+                autoFocus
+                {...{ [CHAT_INPUT_ATTRIBUTE]: "" }}
+                rows={1}
+                onChange={(event) => {
+                  setValue(event.target.value)
+                  setCaretPosition(event.target.selectionStart ?? event.target.value.length)
+                  if (chatId) setDraft(chatId, event.target.value)
+                  autoResize()
+                }}
+                onSelect={(event) => {
+                  setCaretPosition(event.currentTarget.selectionStart ?? 0)
+                }}
+                onPaste={handlePaste}
+                onKeyDown={handleKeyDown}
+                disabled={disabled}
+                className="min-h-7 min-w-0 w-full resize-none bg-transparent px-1 py-[5px] text-[13px] leading-[18px] text-ink outline-none [overflow-wrap:anywhere] placeholder:text-ink-3 max-h-[200px] border-0 shadow-none"
+              />
+              <button
+                type="button"
+                aria-label="Choose model"
+                aria-expanded={modelPickerOpen}
+                onClick={() => setModelPickerOpen((current) => !current)}
+                className="flex h-7 shrink-0 items-center gap-1 rounded-[8px] px-1.5 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
+              >
+                <span className="max-w-28 truncate">
+                  {resolveModelLabel(
+                    availableProviders.find((provider) => provider.id === selectedProvider)?.models ?? [],
+                    providerPrefs.model,
+                  )}
+                </span>
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="text-ink-3">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </button>
+              <Button
+                type="button"
+                onClick={() => void handleOptimizePrompt()}
+                disabled={disabled || !hasTextToSend || optimizingPrompt}
+                variant="ghost"
+                size="icon"
+                title={optimizingPrompt ? "正在优化…" : "优化提示词"}
+                aria-label="优化提示词"
+                className="flex size-7 shrink-0 items-center justify-center rounded-[8px] text-ink-3 hover:bg-hover hover:text-ink"
+              >
+                {optimizingPrompt ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Sparkles className="h-4 w-4" />
+                )}
+              </Button>
+              <Button
+                type="button"
+                onPointerDown={(event) => {
+                  event.preventDefault()
+                  if (!disabled && hasTextToSend && !hasPendingUploads) {
+                    void handleSubmit()
+                  } else if (canCancel) {
+                    onCancel?.()
+                  } else if (!disabled && canSubmit && !hasPendingUploads) {
+                    void handleSubmit()
+                  }
+                }}
+                disabled={disabled || (!canCancel && !canSubmit) || hasPendingUploads}
+                size="icon"
+                className="flex size-7 shrink-0 items-center justify-center rounded-full bg-ink text-canvas hover:opacity-90 disabled:opacity-50"
+              >
+                {hasTextToSend ? (
+                  <ArrowUp className="h-4 w-4" />
+                ) : canCancel ? (
+                  <div className="h-2.5 w-2.5 rounded-xs bg-current" />
+                ) : (
+                  <ArrowUp className="h-4 w-4" />
+                )}
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -1022,7 +1090,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         controlsScrollSpacer), so the net gutter is unchanged but content can
         scroll under the edge.
       */}
-      <div className={cn("relative py-3 max-w-[840px] mx-auto", isStandalone && "pt-3 pb-5")}>
+      <div className={cn("relative pt-2 pb-2 max-w-[840px] mx-auto", isStandalone && "pt-3 pb-4")}>
         <div className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden flex flex-row">
           <div className={controlsScrollSpacer} />
           <label
@@ -1097,6 +1165,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             <ContextWindowMeter usage={activeContextWindow} />
           </div>
         ) : null}
+
+        <CollaborationCoach
+          provider={selectedProvider}
+          enabled={collaborationEnabled}
+          onChange={(enabled) => setChatCollaboration(composerChatId, enabled)}
+        />
       </div>
 
       <AttachmentPreviewModal attachment={selectedAttachment} onOpenChange={(open) => !open && setSelectedAttachmentId(null)} />

@@ -29,7 +29,7 @@ import type {
 import { buildKannaCommitAttribution } from "./attribution"
 import { generateCommitMessageDetailed } from "./generate-commit-message"
 import { getGhAuthInfo } from "./github"
-import { IGNORED_TREE_NAMES } from "./project-files"
+import { IGNORED_TREE_NAMES, isNoiseTreePath } from "./project-files"
 import { resolveCommandPath } from "./process-utils"
 import { inferProjectFileContentType } from "./uploads"
 
@@ -855,7 +855,13 @@ async function readWorktreeFile(repoRoot: string, relativePath: string): Promise
   const absolutePath = path.join(repoRoot, relativePath)
   const fileInfo = await lstat(absolutePath).catch(() => null)
   if (fileInfo?.isSymbolicLink()) {
-    return await readlink(absolutePath).catch(() => null)
+    const target = await readlink(absolutePath).catch(() => null)
+    // git always stores a link target with POSIX separators, but Windows hands
+    // back `..\..\x`. Passing that through makes the patch disagree with the
+    // committed blob on every separator, so a symlink reads as permanently
+    // modified there. Splitting on `path.sep` leaves a genuine backslash in a
+    // POSIX filename alone.
+    return target === null ? null : target.split(path.sep).join("/")
   }
   if (!fileInfo?.isFile()) {
     return null
@@ -920,6 +926,13 @@ function getMetadataDigest(args: {
   baseCommit: string | null
   size: number | undefined
   mtimeMs: number | undefined
+  /**
+   * Content fingerprint, used in place of the mtime when the caller has one.
+   * The digest is the client's patch-cache key, so it has to change only when
+   * the patch would: snapshot mode already hashes every file, and those hashes
+   * identify content exactly where a wall-clock mtime does not.
+   */
+  contentId?: string
 }) {
   return createHash("sha1")
     .update(args.changeType)
@@ -932,7 +945,7 @@ function getMetadataDigest(args: {
     .update("\u0000")
     .update(String(args.size ?? -1))
     .update("\u0000")
-    .update(String(args.mtimeMs ?? -1))
+    .update(args.contentId ?? String(args.mtimeMs ?? -1))
     .digest("hex")
 }
 
@@ -940,6 +953,45 @@ function parseNumstatValue(value: string) {
   if (value === "-" || value.trim() === "") return 0
   const parsed = Number.parseInt(value, 10)
   return Number.isFinite(parsed) ? parsed : 0
+}
+
+/** 扩展名判定：PNG / GLB 等二进制不该按换行字节冒充「+N 行」。 */
+const BINARY_DIFF_EXTENSIONS = new Set([
+  "png", "jpg", "jpeg", "gif", "webp", "ico", "bmp", "avif", "svgz",
+  "pdf", "zip", "gz", "tgz", "tar", "7z", "rar", "wasm",
+  "woff", "woff2", "ttf", "otf", "eot",
+  "mp3", "mp4", "mov", "webm", "wav", "aac", "flac", "ogg",
+  "db", "sqlite", "bin", "exe", "dll", "so", "dylib",
+  // 3D / game assets — git 常把它们当文本 diff，会刷出假的 +N
+  "glb", "gltf", "fbx", "obj", "stl", "3ds", "dae", "blend",
+  "usd", "usda", "usdc", "usdz", "pmx", "vrm", "vmd", "mesh",
+])
+
+function isLikelyBinaryDiffPath(relativePath: string, mimeType?: string): boolean {
+  if (mimeType) {
+    if (
+      mimeType.startsWith("image/") ||
+      mimeType.startsWith("audio/") ||
+      mimeType.startsWith("video/") ||
+      mimeType.startsWith("model/") ||
+      mimeType === "application/octet-stream" ||
+      mimeType === "application/pdf" ||
+      mimeType === "application/zip" ||
+      mimeType === "application/wasm" ||
+      mimeType.includes("font")
+    ) {
+      return true
+    }
+  }
+  const name = relativePath.split("/").at(-1) ?? relativePath
+  const extension = name.includes(".") ? name.split(".").at(-1)!.toLowerCase() : ""
+  return extension !== "" && BINARY_DIFF_EXTENSIONS.has(extension)
+}
+
+function bufferLooksBinary(content: Buffer | null): boolean {
+  if (!content || content.byteLength === 0) return false
+  const sample = content.subarray(0, Math.min(content.byteLength, 8192))
+  return sample.includes(0)
 }
 
 const FILE_SCAN_CONCURRENCY = 32
@@ -1272,22 +1324,27 @@ async function computeCurrentFiles(
       : isFile ? inferProjectFileContentType(relativePath, Bun.file(absolutePath).type) : undefined
     const size = isFile || isSymlink ? fileInfo!.size : undefined
     const mtimeMs = isFile || isSymlink ? fileInfo!.mtimeMs : undefined
+    const isBinary = !isSymlink && isLikelyBinaryDiffPath(relativePath, mimeType)
 
     const trackedStats = trackedStatsByPath.get(relativePath)
-    const additions = trackedStats
-      ? trackedStats.additions
-      : isSymlink
-        ? SYMLINK_LINE_COUNT
-        : isFile
-          ? await getCachedLineCount({
-              cache: lineCountCache,
-              nextCache: nextLineCountCache,
-              absolutePath,
-              size: size ?? 0,
-              mtimeMs: mtimeMs ?? 0,
-            })
-          : 0
-    const deletions = trackedStats?.deletions ?? 0
+    // 未跟踪的 PNG/GLB 等二进制若按 0x0A 字节数「行」，会出现 +529 这种假数字。
+    // git numstat 有时也会把模型当文本数行，二进制一律不计行。
+    const additions = isBinary
+      ? 0
+      : trackedStats
+        ? trackedStats.additions
+        : isSymlink
+          ? SYMLINK_LINE_COUNT
+          : isFile
+            ? await getCachedLineCount({
+                cache: lineCountCache,
+                nextCache: nextLineCountCache,
+                absolutePath,
+                size: size ?? 0,
+                mtimeMs: mtimeMs ?? 0,
+              })
+            : 0
+    const deletions = isBinary ? 0 : (trackedStats?.deletions ?? 0)
 
     return {
       path: relativePath,
@@ -1445,23 +1502,64 @@ async function writeSnapshotBaseline(dataDir: string, projectId: string, baselin
   await writeFile(path.join(dir, "manifest.json"), JSON.stringify(baseline, null, 2), "utf8")
 }
 
+function baselineBlobDir(dataDir: string, projectId: string) {
+  return path.join(snapshotBaselineDir(dataDir, projectId), "blobs")
+}
+
+/**
+ * 内容寻址落盘，目录由调用方用 `ensureBaselineBlobDir` 预先建好。
+ *
+ * `wx` 把「已经存过就跳过」压成一次系统调用。先前是 stat（未命中时还要抛一次
+ * 异常）→ mkdir → write 三步，而且是按文件数乘的：几百个文件的项目光建基线
+ * 就要好几秒，绝大部分耗在这里而不是读文件。
+ */
 async function storeBaselineBlob(dataDir: string, projectId: string, sha256: string, content: Buffer) {
-  const blobPath = path.join(snapshotBaselineDir(dataDir, projectId), "blobs", sha256)
   try {
-    await stat(blobPath)
-    return
-  } catch {}
-  await mkdir(path.dirname(blobPath), { recursive: true })
-  await writeFile(blobPath, content)
+    await writeFile(path.join(baselineBlobDir(dataDir, projectId), sha256), content, { flag: "wx" })
+  } catch (error) {
+    // EEXIST：同样的内容已经在库里了，内容寻址下这就是成功。
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+  }
+}
+
+async function ensureBaselineBlobDir(dataDir: string, projectId: string) {
+  await mkdir(baselineBlobDir(dataDir, projectId), { recursive: true })
 }
 
 async function loadBaselineBlob(dataDir: string, projectId: string, sha256: string): Promise<Buffer> {
   return await readFile(path.join(snapshotBaselineDir(dataDir, projectId), "blobs", sha256))
 }
 
-/** 扫描目录树（跳过噪音目录、用户忽略项、超大文件、符号链接）。 */
-async function scanSnapshotTree(root: string, ignored: readonly string[]): Promise<SnapshotBaselineEntry[]> {
-  const entries: SnapshotBaselineEntry[] = []
+/** 上一遍扫描对某个文件的认知，用来跳过没动过的文件。 */
+interface SnapshotScanCacheEntry {
+  size: number
+  mtimeMs: number
+  sha256: string
+}
+
+type SnapshotScanCache = Map<string, SnapshotScanCacheEntry>
+
+/**
+ * 扫描目录树（跳过噪音目录、用户忽略项、超大文件、符号链接）并逐个哈希。
+ *
+ * 两点让它不再拖慢刷新。体积走 `lstat`，几百 MB 的构建产物直接跳过，不会先
+ * 整个读进 Buffer 再因为超限丢掉。以及 size + mtime 与上一遍一致的文件复用
+ * 上次的哈希——每次刷新都把整棵没动过的树重读重哈希，正是改动面板要等好几秒
+ * 的原因。
+ */
+async function scanSnapshotTree(
+  root: string,
+  ignored: readonly string[],
+  options: {
+    previous?: SnapshotScanCache
+    /**
+     * 每个真正被读取的文件都会回调一次。首次建基线借此顺手把 blob 落盘，
+     * 不必为了写 blob 把整棵树再读第二遍。
+     */
+    onContent?: (entry: SnapshotBaselineEntry, content: Buffer) => Promise<void>
+  } = {},
+): Promise<{ entries: SnapshotBaselineEntry[]; cache: SnapshotScanCache }> {
+  const candidates: { absolutePath: string; relativePath: string }[] = []
   const walk = async (dir: string, rel: string) => {
     let children: import("node:fs").Dirent[]
     try {
@@ -1480,37 +1578,60 @@ async function scanSnapshotTree(root: string, ignored: readonly string[]): Promi
         continue
       }
       if (!child.isFile()) continue
-      let content: Buffer
-      try {
-        content = await readFile(absolutePath)
-      } catch {
-        continue
-      }
-      if (content.byteLength > SNAPSHOT_MAX_FILE_BYTES) continue
-      entries.push({
-        path: relativePath,
-        sha256: createHash("sha256").update(content).digest("hex"),
-        size: content.byteLength,
-      })
+      candidates.push({ absolutePath, relativePath })
     }
   }
   await walk(root, "")
-  return entries
+
+  const scanned = await mapWithConcurrency(candidates, FILE_SCAN_CONCURRENCY, async (candidate) => {
+    const info = await lstat(candidate.absolutePath).catch(() => null)
+    if (!info?.isFile() || info.size > SNAPSHOT_MAX_FILE_BYTES) return null
+
+    const cached = options.previous?.get(candidate.relativePath)
+    if (cached && cached.size === info.size && cached.mtimeMs === info.mtimeMs) {
+      return { path: candidate.relativePath, sha256: cached.sha256, size: cached.size, mtimeMs: cached.mtimeMs }
+    }
+
+    const content = await readFile(candidate.absolutePath).catch(() => null)
+    // 读取期间文件可能变大，越限的一律不收，避免把巨型文件带进基线。
+    if (!content || content.byteLength > SNAPSHOT_MAX_FILE_BYTES) return null
+    const entry: SnapshotBaselineEntry = {
+      path: candidate.relativePath,
+      sha256: createHash("sha256").update(content).digest("hex"),
+      size: content.byteLength,
+    }
+    await options.onContent?.(entry, content)
+    return { ...entry, mtimeMs: info.mtimeMs }
+  })
+
+  const entries: SnapshotBaselineEntry[] = []
+  const cache: SnapshotScanCache = new Map()
+  for (const item of scanned) {
+    if (!item) continue
+    entries.push({ path: item.path, sha256: item.sha256, size: item.size })
+    cache.set(item.path, { size: item.size, mtimeMs: item.mtimeMs, sha256: item.sha256 })
+  }
+  return { entries, cache }
 }
 
 function countDiffLines(before: Buffer | null, after: Buffer | null) {
   let additions = 0
   let deletions = 0
-  const beforeText = before?.toString("utf8") ?? ""
-  const afterText = after?.toString("utf8") ?? ""
-  if (beforeText.includes("\u0000") || afterText.includes("\u0000")) {
+  // 先看原始字节里有没有 NUL：UTF-8 解码后再查 \u0000 会漏掉部分二进制。
+  if (bufferLooksBinary(before) || bufferLooksBinary(after)) {
     return { additions: 0, deletions: 0 }
   }
+  const beforeText = before?.toString("utf8") ?? ""
+  const afterText = after?.toString("utf8") ?? ""
   for (const part of diffLines(beforeText, afterText)) {
     if (part.added) additions += part.count ?? 0
     else if (part.removed) deletions += part.count ?? 0
   }
   return { additions, deletions }
+}
+
+function binaryFilesDifferPatch(relativePath: string) {
+  return `diff --git a/${relativePath} b/${relativePath}\nBinary files a/${relativePath} and b/${relativePath} differ\n`
 }
 
 /** 纯 JS 生成 git 风格 unified diff（不依赖 git 命令）。 */
@@ -1535,6 +1656,8 @@ export class DiffStore {
   private readonly states = new Map<string, StoredChatDiffState>()
   private readonly snapshotVersions = new Map<string, number>()
   private readonly lineCountCaches = new Map<string, LineCountCache>()
+  /** 上一遍快照扫描的 size/mtime/哈希，按项目保留，跨刷新复用。 */
+  private readonly snapshotScanCaches = new Map<string, SnapshotScanCache>()
   private readonly activeRefreshes = new Map<string, Promise<boolean>>()
   private readonly queuedRefreshes = new Map<string, Promise<boolean>>()
   /** PR numbers by "repoRoot\nlocalBranchName", recorded when a PR is checked out through Kanna. */
@@ -1762,6 +1885,9 @@ export class DiffStore {
     path: string
   }) {
     const relativePath = normalizeRepoRelativePath(args.path)
+    if (isLikelyBinaryDiffPath(relativePath, inferProjectFileContentType(relativePath))) {
+      return { patch: binaryFilesDifferPatch(relativePath) }
+    }
     const repo = await resolveRepo(args.projectPath)
     if (!repo) {
       // 非 git 项目：基线 vs 工作区，纯 JS 生成 unified diff。
@@ -1883,20 +2009,22 @@ export class DiffStore {
   private async performSnapshotRefresh(projectId: string, projectPath: string) {
     this.lineCountCaches.delete(projectId)
     const baseline = await readSnapshotBaseline(this.dataDir, projectId)
-    const current = await scanSnapshotTree(projectPath, baseline?.ignored ?? [])
 
     if (!baseline) {
-      // 首次：把当前树固化为基线，不产生任何改动。
+      // 首次：把当前树固化为基线，不产生任何改动。blob 直接在这遍扫描里落盘，
+      // 省掉过去为了写 blob 把整棵树再串行读一次的第二遍。
+      const createdAt = Date.now()
+      await ensureBaselineBlobDir(this.dataDir, projectId)
+      const { entries, cache } = await scanSnapshotTree(projectPath, [], {
+        onContent: (entry, content) => storeBaselineBlob(this.dataDir, projectId, entry.sha256, content),
+      })
+      this.snapshotScanCaches.set(projectId, cache)
       const nextBaseline: SnapshotBaseline = {
         version: 1,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
+        createdAt,
+        updatedAt: createdAt,
         ignored: [],
-        files: current,
-      }
-      for (const entry of current) {
-        const content = await readFile(path.join(projectPath, entry.path)).catch(() => null)
-        if (content) await storeBaselineBlob(this.dataDir, projectId, entry.sha256, content)
+        files: entries,
       }
       await writeSnapshotBaseline(this.dataDir, projectId, nextBaseline)
       this.onWorkingTreeProbe?.(projectId, { dirty: false, paths: [] })
@@ -1915,31 +2043,46 @@ export class DiffStore {
       })
     }
 
+    const { entries: current, cache } = await scanSnapshotTree(projectPath, baseline.ignored, {
+      previous: this.snapshotScanCaches.get(projectId),
+    })
+    this.snapshotScanCaches.set(projectId, cache)
+
     const baselineByPath = new Map(baseline.files.map((entry) => [entry.path, entry]))
     const currentByPath = new Map(current.map((entry) => [entry.path, entry]))
 
-    const dirtyPaths: string[] = []
-    const files: ChatDiffFile[] = []
-    const allPaths = new Set([...baselineByPath.keys(), ...currentByPath.keys()])
-    for (const relativePath of allPaths) {
-      if (isSnapshotIgnoredPath(baseline.ignored, relativePath)) continue
+    const allPaths = [...new Set([...baselineByPath.keys(), ...currentByPath.keys()])]
+    const changedPaths = allPaths.filter((relativePath) => {
+      if (isSnapshotIgnoredPath(baseline.ignored, relativePath)) return false
+      // 基线可能是噪音名单扩充之前建的，里面还留着 target/ 或 .venv/ 下的条目。
+      // 扫描已经不再收它们，不在这里挡掉的话，整棵目录会集体显示成「已删除」。
+      if (isNoiseTreePath(relativePath)) return false
       const before = baselineByPath.get(relativePath)
       const after = currentByPath.get(relativePath)
-      const beforeExists = before !== undefined
-      const afterExists = after !== undefined
-      if (beforeExists && afterExists && before.sha256 === after.sha256) continue
+      // 两边都在且哈希相同 = 没动过，连内容都不用读。
+      return !(before && after && before.sha256 === after.sha256)
+    })
 
-      const changeType: ChatDiffFile["changeType"] = !beforeExists
+    // 每个改动文件都要读基线 blob + 工作区内容来数增删行，串行做等于把磁盘
+    // 延迟乘以改动数量；和 git 那条路一样按固定并发扇出。
+    const files = await mapWithConcurrency(changedPaths, FILE_SCAN_CONCURRENCY, async (relativePath): Promise<ChatDiffFile> => {
+      const before = baselineByPath.get(relativePath)
+      const after = currentByPath.get(relativePath)
+      const changeType: ChatDiffFile["changeType"] = !before
         ? "added"
-        : !afterExists
+        : !after
           ? "deleted"
           : "modified"
-      const beforeBlob = before ? await loadBaselineBlob(this.dataDir, projectId, before.sha256).catch(() => null) : null
-      const afterContent = after ? await readFile(path.join(projectPath, after.path)).catch(() => null) : null
-      const { additions, deletions } = countDiffLines(beforeBlob, afterContent)
+      const mimeType = inferProjectFileContentType(relativePath)
+      const [beforeBlob, afterContent] = await Promise.all([
+        before ? loadBaselineBlob(this.dataDir, projectId, before.sha256).catch(() => null) : null,
+        after ? readFile(path.join(projectPath, after.path)).catch(() => null) : null,
+      ])
+      const { additions, deletions } = isLikelyBinaryDiffPath(relativePath, mimeType)
+        ? { additions: 0, deletions: 0 }
+        : countDiffLines(beforeBlob, afterContent)
       const size = after?.size ?? before?.size
-      dirtyPaths.push(relativePath)
-      files.push({
+      return {
         path: relativePath,
         changeType,
         // 快照模式下没有 git，新增文件视为 untracked（可 Ignore）。
@@ -1952,12 +2095,14 @@ export class DiffStore {
           afterPath: after?.path ?? relativePath,
           baseCommit: null,
           size,
-          mtimeMs: Date.now(),
+          mtimeMs: undefined,
+          contentId: `${before?.sha256 ?? ""}:${after?.sha256 ?? ""}`,
         }),
-        mimeType: inferProjectFileContentType(relativePath),
+        mimeType,
         size,
-      })
-    }
+      }
+    })
+    const dirtyPaths = changedPaths
 
     this.onWorkingTreeProbe?.(projectId, { dirty: dirtyPaths.length > 0, paths: dirtyPaths })
     return this.commitState(projectId, {
@@ -2808,6 +2953,54 @@ export class DiffStore {
     } satisfies DiffCommitResult
   }
 
+  /**
+   * 本地快照模式：把当前工作区重新固化为基线，清空「改动」列表。
+   * 用于结束一轮编辑后不再把上次改动叠进下一次。
+   */
+  async acceptSnapshotBaseline(args: {
+    projectId: string
+    projectPath: string
+  }) {
+    const repo = await resolveRepo(args.projectPath)
+    if (repo) {
+      throw new Error("「接受为基线」仅适用于本地快照模式（非 git 项目）")
+    }
+
+    const previous = await readSnapshotBaseline(this.dataDir, args.projectId)
+    const ignored = previous?.ignored ?? []
+    const createdAt = previous?.createdAt ?? Date.now()
+    const updatedAt = Date.now()
+    await ensureBaselineBlobDir(this.dataDir, args.projectId)
+    const { entries, cache } = await scanSnapshotTree(args.projectPath, ignored, {
+      onContent: (entry, content) => storeBaselineBlob(this.dataDir, args.projectId, entry.sha256, content),
+    })
+    this.snapshotScanCaches.set(args.projectId, cache)
+    await writeSnapshotBaseline(this.dataDir, args.projectId, {
+      version: 1,
+      createdAt,
+      updatedAt,
+      ignored,
+      files: entries,
+    })
+    this.lineCountCaches.delete(args.projectId)
+    // 基线已等于当前树，直接清空改动；不必再跑一遍 performSnapshotRefresh。
+    this.onWorkingTreeProbe?.(args.projectId, { dirty: false, paths: [] })
+    const snapshotChanged = this.commitState(args.projectId, {
+      status: "snapshot",
+      branchName: undefined,
+      defaultBranchName: undefined,
+      hasOriginRemote: undefined,
+      originRepoSlug: undefined,
+      hasUpstream: undefined,
+      aheadCount: undefined,
+      behindCount: undefined,
+      lastFetchedAt: undefined,
+      files: [],
+      branchHistory: { entries: [] },
+    })
+    return { snapshotChanged }
+  }
+
   async discardFile(args: {
     projectId: string
     projectPath: string
@@ -2879,7 +3072,10 @@ export class DiffStore {
         throw new Error(`File is no longer changed: ${ignoreEntry}`)
       }
       const baselineByPath = new Map(baseline.files.map((entry) => [entry.path, entry]))
-      const current = await scanSnapshotTree(args.projectPath, baseline.ignored)
+      const { entries: current, cache } = await scanSnapshotTree(args.projectPath, baseline.ignored, {
+        previous: this.snapshotScanCaches.get(args.projectId),
+      })
+      this.snapshotScanCaches.set(args.projectId, cache)
       const currentByPath = new Map(current.map((entry) => [entry.path, entry]))
       if (!baselineByPath.has(ignoreEntry) && !currentByPath.has(ignoreEntry)) {
         throw new Error(`File is no longer changed: ${ignoreEntry}`)

@@ -257,7 +257,7 @@ export function DiffFileCard({
               </div>
             </div>
             <div className="flex shrink-0 items-center gap-1.5 select-none">
-              <DiffFileStat additions={file.additions} deletions={file.deletions} />
+              <DiffFileStat additions={file.additions} deletions={file.deletions} mimeType={file.mimeType} />
               <button
                 type="button"
                 aria-label={`Open actions for ${file.path}`}

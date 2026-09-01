@@ -3,9 +3,17 @@ import react from "@vitejs/plugin-react"
 import { getDefaultDevServerPort } from "./src/shared/dev-ports"
 import { DEV_CLIENT_PORT } from "./src/shared/ports"
 
+function envFirst(...names: string[]): string | undefined {
+  for (const name of names) {
+    const value = process.env[name]
+    if (value) return value
+  }
+  return undefined
+}
+
 function getAllowedHosts() {
   const defaults = ["localhost", "127.0.0.1", "0.0.0.0"]
-  const configured = process.env.KANNA_DEV_ALLOWED_HOSTS
+  const configured = envFirst("AIANG_DEV_ALLOWED_HOSTS", "KANNA_DEV_ALLOWED_HOSTS")
   if (!configured) return defaults
   if (configured === "true") return true
 
@@ -20,11 +28,11 @@ function getAllowedHosts() {
 }
 
 function getBackendTargetHost() {
-  return process.env.KANNA_DEV_BACKEND_TARGET_HOST || "127.0.0.1"
+  return envFirst("AIANG_DEV_BACKEND_TARGET_HOST", "KANNA_DEV_BACKEND_TARGET_HOST") || "127.0.0.1"
 }
 
 function getBackendPort() {
-  const configured = Number(process.env.KANNA_DEV_BACKEND_PORT)
+  const configured = Number(envFirst("AIANG_DEV_BACKEND_PORT", "KANNA_DEV_BACKEND_PORT"))
   return Number.isFinite(configured) && configured > 0 ? configured : getDefaultDevServerPort(DEV_CLIENT_PORT)
 }
 
@@ -57,5 +65,25 @@ export default defineConfig({
   build: {
     outDir: "dist/client",
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes("node_modules")) return
+          if (id.includes("react-dom") || id.includes("/react/") || id.includes("\\react\\") || id.includes("scheduler")) {
+            return "react-vendor"
+          }
+          if (id.includes("@radix-ui") || id.includes("cmdk")) return "radix-vendor"
+          if (id.includes("@xterm")) return "xterm-vendor"
+          if ((id.includes("shiki") || id.includes("@shikijs")) && !id.includes("@shikijs/langs")) {
+            return "shiki-vendor"
+          }
+          if (id.includes("react-markdown") || id.includes("remark-gfm")) return "markdown-vendor"
+          if (id.includes("@codemirror") || id.includes("@uiw/react-codemirror") || id.includes("@lezer")) {
+            return "codemirror-vendor"
+          }
+          if (id.includes("lucide-react")) return "icons-vendor"
+        },
+      },
+    },
   },
 })

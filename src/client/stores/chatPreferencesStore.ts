@@ -12,6 +12,7 @@ import {
   type ProviderPreference,
   type ProviderModelOptionsByProvider,
 } from "../../shared/types"
+import { CHAT_COLLABORATION_STORAGE_KEY } from "../lib/storageKeys"
 import {
   createDefaultProviderDefaults,
   normalizeClaudePreference,
@@ -51,7 +52,8 @@ export type ComposerState = {
 export const NEW_CHAT_COMPOSER_ID = "__new__"
 
 export function normalizeDefaultProvider(value?: string): DefaultProviderPreference {
-  if (value === "claude" || value === "codex" || value === "cursor" || value === "pi" || value === "deepseek") return value
+  if (value === "claude" || value === "codex" || value === "cursor" || value === "pi" || value === "deepseek" || value === "reasonix" || value === "youmi") return value
+  if (value === "last_used") return value
   return "last_used"
 }
 
@@ -75,6 +77,46 @@ type PersistedChatPreferencesState = LegacyPersistedChatPreferencesState & Parti
   chatStates: Record<string, PersistedComposerState | ComposerState>
   legacyComposerState: PersistedComposerState | ComposerState | null
 }>
+
+function readCollaborationByChatId(): Record<string, boolean> {
+  try {
+    if (typeof localStorage === "undefined") return {}
+    const raw = localStorage.getItem(CHAT_COLLABORATION_STORAGE_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {}
+    const next: Record<string, boolean> = {}
+    for (const [chatId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === "boolean") next[chatId] = value
+    }
+    return next
+  } catch {
+    return {}
+  }
+}
+
+function writeCollaborationByChatId(value: Record<string, boolean>) {
+  try {
+    if (typeof localStorage === "undefined") return
+    localStorage.setItem(CHAT_COLLABORATION_STORAGE_KEY, JSON.stringify(value))
+  } catch {
+    // quota / private mode — keep the in-memory map either way
+  }
+}
+
+function withCollaborationValue(
+  current: Record<string, boolean>,
+  chatId: string,
+  enabled: boolean,
+): Record<string, boolean> | null {
+  if (enabled) {
+    if (current[chatId] === true) return null
+    return { ...current, [chatId]: true }
+  }
+  if (!(chatId in current)) return null
+  const { [chatId]: _removed, ...rest } = current
+  return rest
+}
 
 function logChatPreferences(message: string, details?: unknown) {
   if (details === undefined) {
@@ -210,6 +252,11 @@ interface ChatPreferencesState {
    * defaults must never read as an intentional switch.
    */
   pendingProviderSwitches: Record<string, true>
+  /**
+   * Per-chat 协作验收开关。存在 localStorage，刷新后仍在。
+   * Cursor 引擎即使这里为 true 也不会发出 collaboration 标志。
+   */
+  collaborationByChatId: Record<string, boolean>
   legacyComposerState: ComposerState | null
   setDefaultProvider: (provider: DefaultProviderPreference) => void
   syncProviderDefaults: (defaultProvider: DefaultProviderPreference, providerDefaults: ChatProviderPreferences) => void
@@ -220,7 +267,10 @@ interface ChatPreferencesState {
   ) => void
   setProviderDefaultMode: (provider: AgentProvider, mode: ChatMode) => void
   getComposerState: (chatId: string) => ComposerState
-  initializeComposerForChat: (chatId: string, options?: { sourceState?: ComposerState | null }) => void
+  getChatCollaboration: (chatId: string) => boolean
+  setChatCollaboration: (chatId: string, enabled: boolean) => void
+  copyChatCollaboration: (fromChatId: string, toChatId: string) => void
+  initializeComposerForChat: (chatId: string, options?: { sourceState?: ComposerState | null; sourceChatId?: string }) => void
   setComposerState: (chatId: string, composerState: ComposerState) => void
   setChatComposerProvider: (chatId: string, provider: AgentProvider) => void
   setChatComposerModel: (chatId: string, model: string) => void
@@ -271,6 +321,7 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
     providerDefaults: createDefaultProviderDefaults(),
     chatStates: {},
     pendingProviderSwitches: {},
+    collaborationByChatId: readCollaborationByChatId(),
     legacyComposerState: null,
     setDefaultProvider: (defaultProvider) => set({ defaultProvider }),
     syncProviderDefaults: (defaultProvider, providerDefaults) =>
@@ -329,6 +380,25 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
           },
         })),
       getComposerState: (chatId) => cloneComposerState(getStoredComposerState(get(), chatId)),
+      getChatCollaboration: (chatId) => Boolean(get().collaborationByChatId[chatId]),
+      setChatCollaboration: (chatId, enabled) =>
+        set((state) => {
+          const next = withCollaborationValue(state.collaborationByChatId, chatId, enabled)
+          if (!next) return state
+          writeCollaborationByChatId(next)
+          return { collaborationByChatId: next }
+        }),
+      copyChatCollaboration: (fromChatId, toChatId) =>
+        set((state) => {
+          const next = withCollaborationValue(
+            state.collaborationByChatId,
+            toChatId,
+            Boolean(state.collaborationByChatId[fromChatId]),
+          )
+          if (!next) return state
+          writeCollaborationByChatId(next)
+          return { collaborationByChatId: next }
+        }),
       initializeComposerForChat: (chatId, options) =>
         set((state) => {
           if (state.chatStates[chatId]) {
@@ -344,11 +414,24 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
 
           logChatPreferences("initializeComposerForChat", { chatId, composerState })
 
+          const sourceChatId = options?.sourceChatId
+          const collaborationByChatId = sourceChatId
+            ? withCollaborationValue(
+              state.collaborationByChatId,
+              chatId,
+              Boolean(state.collaborationByChatId[sourceChatId]),
+            ) ?? state.collaborationByChatId
+            : state.collaborationByChatId
+          if (collaborationByChatId !== state.collaborationByChatId) {
+            writeCollaborationByChatId(collaborationByChatId)
+          }
+
           return {
             chatStates: {
               ...state.chatStates,
               [chatId]: composerState,
             },
+            collaborationByChatId,
           }
         }),
       setComposerState: (chatId, composerState) =>

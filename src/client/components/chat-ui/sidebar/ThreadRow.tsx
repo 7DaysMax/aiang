@@ -165,11 +165,12 @@ export function ThreadRow({
           // When the Chats tab renders above the project groups, its copy is
           // found first and the sidebar scrolls up to it.
           data-chat-id={normalizeChatId(thread.chatId)}
+          data-row
           className={cn(
-            "group flex w-full cursor-pointer select-none items-center gap-2.5 rounded-lg border px-2 py-1.5 max-md:py-1.5 text-left text-sm max-md:text-base active:scale-[0.985] transition-all",
+            "group relative z-10 mx-0.5 flex h-8 w-full cursor-pointer select-none items-center gap-2 rounded-[8px] px-2 text-left text-[13px] transition-[background-color,color,transform] duration-150 active:scale-[0.98]",
             isActive
-              ? "bg-muted hover:bg-muted border-border"
-              : "border-border/0 hover:border-border hover:bg-muted/20 dark:hover:border-slate-400/10",
+              ? "bg-hover-2 text-ink"
+              : "text-ink-2 hover:text-ink",
           )}
           onClick={() => onSelect(thread.chatId)}
         >

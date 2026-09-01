@@ -1,5 +1,6 @@
 import process from "node:process"
-import { LOG_PREFIX } from "../shared/branding"
+import { join } from "node:path"
+import { APP_VERSION, LOG_PREFIX } from "../shared/branding"
 import {
   fetchLatestPackageVersion,
   installPackageVersion,
@@ -7,12 +8,22 @@ import {
   runCli,
 } from "./cli-runtime"
 import { CLI_STARTUP_UPDATE_RESTART_EXIT_CODE, CLI_UI_UPDATE_RESTART_EXIT_CODE } from "./restart"
+import { resolveAppRoot } from "./app-root"
 import { installNightlyBuild } from "./nightly"
 import { startKannaServer } from "./server"
 
-// Read version from package.json at the package root
-const pkg = await Bun.file(new URL("../../package.json", import.meta.url)).json()
-const VERSION: string = pkg.version ?? "0.0.0"
+async function readPackageVersion(): Promise<string> {
+  try {
+    const pkgPath = join(resolveAppRoot(), "package.json")
+    const pkg = await Bun.file(pkgPath).json() as { version?: string }
+    if (pkg.version) return pkg.version
+  } catch {
+    // compiled / missing package.json — fall back to embedded branding
+  }
+  return APP_VERSION
+}
+
+const VERSION: string = await readPackageVersion()
 
 const argv = process.argv.slice(2)
 let resolveExitAction: ((action: "ui_restart" | "exit") => void) | null = null

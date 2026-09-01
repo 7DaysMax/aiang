@@ -43,9 +43,8 @@ function textHeight(text: string | undefined) {
 
 export function estimateTranscriptRowSize(row: ResolvedTranscriptRow): number {
   if (row.kind === "tool-group") {
-    // Collapsed by default, so the group reads as one header regardless of how
-    // many calls it holds.
-    return TOOL_ROW + ROW_CHROME
+    // Trajectory is expanded by default: header plus one row per tool call.
+    return TOOL_ROW * (row.messages.length + 1) + ROW_CHROME
   }
 
   const message = row.message
@@ -65,6 +64,8 @@ export function estimateTranscriptRowSize(row: ResolvedTranscriptRow): number {
       return textHeight(message.summary) + ROW_CHROME
     case "result":
       return 44
+    case "collaboration_review":
+      return textHeight(message.summary) + ROW_CHROME + 48
     case "context_window_updated":
     case "compact_boundary":
     case "context_cleared":

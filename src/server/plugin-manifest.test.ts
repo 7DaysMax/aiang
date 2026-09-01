@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { parseMarketplaceManifest, parsePluginManifest } from "./plugin-manifest"
+import { parseMarketplaceManifest, parsePluginManifest, sanitizePluginName } from "./plugin-manifest"
 
 describe("parsePluginManifest", () => {
   test("parses a full Codex-style plugin.json", () => {
@@ -26,6 +26,7 @@ describe("parsePluginManifest", () => {
     expect(manifest.version).toBe("1.2.0")
     expect(manifest.skills).toEqual(["skills"])
     expect(manifest.commands).toEqual(["commands"])
+    expect(manifest.tools).toEqual([])
     expect(manifest.mcpServers.tools).toMatchObject({ command: "npx", args: ["-y", "@tools/mcp"], env: { KEY: "value" } })
     expect(manifest.hooks?.preTurn).toBe("echo start")
     expect(manifest.interface?.displayName).toBe("My Plugin")
@@ -42,7 +43,32 @@ describe("parsePluginManifest", () => {
     const manifest = parsePluginManifest(JSON.stringify({ name: "minimal", skills: "skills" }))
     expect(manifest.skills).toEqual(["skills"])
     expect(manifest.commands).toEqual([])
+    expect(manifest.tools).toEqual([])
     expect(manifest.mcpServers).toEqual({})
+  })
+
+  test("parses Youmi tool plugins from .youmi-plugin fields", () => {
+    const manifest = parsePluginManifest(JSON.stringify({
+      name: "coding-tools",
+      tools: [
+        {
+          name: "glob",
+          description: "List files",
+          permission: "r",
+          entry: "./tools/glob.ts",
+          parameters: { type: "object", properties: { pattern: { type: "string" } } },
+        },
+      ],
+    }))
+    expect(manifest.tools).toEqual([
+      {
+        name: "glob",
+        description: "List files",
+        permission: "r",
+        entry: "tools/glob.ts",
+        parameters: { type: "object", properties: { pattern: { type: "string" } } },
+      },
+    ])
   })
 })
 
@@ -61,5 +87,12 @@ describe("parseMarketplaceManifest", () => {
     expect(marketplace.plugins[0]).toMatchObject({ name: "local-plugin", source: { kind: "local", path: "plugin-1" } })
     expect(marketplace.plugins[1]).toMatchObject({ name: "string-plugin", source: { kind: "local", path: "plugins/string-plugin" } })
     expect(marketplace.plugins[2]).toMatchObject({ name: "git-plugin", source: { kind: "git", url: "https://github.com/x/y.git", ref: "main" } })
+  })
+})
+
+describe("sanitizePluginName", () => {
+  test("strips npm scopes", () => {
+    expect(sanitizePluginName("@dsh/toolkit")).toBe("toolkit")
+    expect(sanitizePluginName("dsh-at-file")).toBe("dsh-at-file")
   })
 })

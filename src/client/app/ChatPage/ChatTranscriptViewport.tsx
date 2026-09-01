@@ -14,6 +14,7 @@ import { QueuedUserMessage } from "../../components/messages/QueuedUserMessage"
 import { OpenLocalLinkProvider, type OpenLocalLinkTarget } from "../../components/messages/shared"
 import { ProcessingMessage } from "../../components/messages/ProcessingMessage"
 import { ChangesSummaryCard } from "../../components/messages/ChangesSummaryCard"
+import { SelectionBar } from "../../components/bui/SelectionBar"
 import { ContextMenu, ContextMenuTrigger } from "../../components/ui/context-menu"
 import { OpenExternalContextMenuContent, openContextMenuFromButton } from "../../components/open-external-menu"
 import { TRANSCRIPT_PADDING_BOTTOM_OFFSET } from "../kannaStateHelpers"
@@ -856,6 +857,7 @@ const TranscriptScrollerBody = memo(function TranscriptScrollerBody({
 
   return (
     <>
+      <SelectionBar />
       <OpenLocalLinkProvider onOpenLocalLink={handleOpenLocalLinkClick}>
         <MessageScroller className="h-full flex-1">
           <MessageScrollerViewport
@@ -900,7 +902,7 @@ const TranscriptScrollerBody = memo(function TranscriptScrollerBody({
                     <KannaTranscriptRow
                       row={row}
                       flash={flashRowId === row.id && rowLightsItself(row)}
-                      toolGroupExpanded={row.kind === "tool-group" ? (toolGroupExpanded[row.id] ?? false) : undefined}
+                      toolGroupExpanded={row.kind === "tool-group" ? (toolGroupExpanded[row.id] ?? true) : undefined}
                       onToolGroupExpandedChange={handleToolGroupExpandedChange}
                       onAskUserQuestionSubmit={onAskUserQuestionSubmit}
                       onExitPlanModeConfirm={onExitPlanModeConfirm}

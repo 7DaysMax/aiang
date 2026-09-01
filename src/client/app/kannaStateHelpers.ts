@@ -8,7 +8,7 @@ import { processTranscriptMessages } from "../lib/parseTranscript"
 export function getPreviousPrompt(messages: ReturnType<typeof processTranscriptMessages>) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
-    if (message?.kind === "user_prompt" && message.content.trim().length > 0) {
+    if (message?.kind === "user_prompt" && !message.hidden && message.content.trim().length > 0) {
       return message.content
     }
   }
@@ -164,6 +164,30 @@ export function composerStateFromSendOptions(options?: {
       modelOptions: {
         reasoningEffort: options.modelOptions.deepseek.reasoningEffort ?? "high",
         fastMode: options.modelOptions.deepseek.fastMode ?? false,
+      },
+      planMode: Boolean(options.planMode),
+      autoPlan: Boolean(options.autoPlan),
+    }
+  }
+  if (options?.provider === "youmi" && options.model && options.modelOptions?.youmi) {
+    return {
+      provider: "youmi",
+      model: options.model,
+      modelOptions: {
+        reasoningEffort: options.modelOptions.youmi.reasoningEffort ?? "max",
+        fastMode: options.modelOptions.youmi.fastMode ?? false,
+      },
+      planMode: Boolean(options.planMode),
+      autoPlan: Boolean(options.autoPlan),
+    }
+  }
+  if (options?.provider === "reasonix" && options.model && options.modelOptions?.reasonix) {
+    return {
+      provider: "reasonix",
+      model: options.model,
+      modelOptions: {
+        reasoningEffort: options.modelOptions.reasonix.reasoningEffort ?? "high",
+        fastMode: options.modelOptions.reasonix.fastMode ?? false,
       },
       planMode: Boolean(options.planMode),
       autoPlan: Boolean(options.autoPlan),

@@ -3,15 +3,40 @@ import path from "node:path"
 import type { EventStore } from "./event-store"
 import { inferProjectFileContentType } from "./uploads"
 
-const MAX_PROJECT_FILE_BYTES = 5 * 1024 * 1024
+export const MAX_PROJECT_FILE_BYTES = 5 * 1024 * 1024
+/** 响应头：本次返回被截断，以及文件的真实字节数。 */
+export const FILE_TRUNCATED_HEADER = "x-aiang-truncated"
+export const FILE_SIZE_HEADER = "x-aiang-file-size"
 const MAX_TREE_ENTRIES = 2000
 const MAX_COMPILE_OUTPUT_CHARS = 60_000
 const COMPILE_TIMEOUT_MS = 180_000
 
-/** 文件面板隐藏的噪音目录/文件（体积大或内部产物）。 */
+/**
+ * 文件面板隐藏的噪音目录/文件（体积大或内部产物）。
+ *
+ * 同一份名单也是无 git 项目快照扫描的过滤器，那边要把每个文件读出来做哈希，
+ * 所以漏掉一个缓存目录的代价比这里大得多：一个 Rust 的 target/ 或 Python 的
+ * .venv/ 动辄上万个文件。
+ *
+ * 收录标准是「几乎不可能是人写的源码」。`build`、`out` 这类裸名字故意不收，
+ * 它们在部分项目里确实放着源码或脚本，藏掉比留着更糟。
+ */
 export const IGNORED_TREE_NAMES = new Set([
-  ".git", "node_modules", "dist", ".kanna", ".DS_Store", "bun.lock", "package-lock.json", "pnpm-lock.yaml",
+  ".git", "node_modules", "dist", ".kanna", ".aiang", ".DS_Store", "Thumbs.db",
+  // 包管理器 lockfile
+  "bun.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+  // 构建/打包工具缓存
+  ".next", ".nuxt", ".svelte-kit", ".turbo", ".parcel-cache", ".gradle", ".cache", "target",
+  // Python
+  "__pycache__", ".venv", "venv", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox",
+  // 测试覆盖率产物
+  "coverage", ".nyc_output",
 ])
+
+/** 路径上任意一段命中噪音名单即为噪音（名单只认单段名字）。 */
+export function isNoiseTreePath(relativePath: string) {
+  return relativePath.split("/").some((segment) => IGNORED_TREE_NAMES.has(segment))
+}
 
 export interface ProjectTreeEntry {
   name: string

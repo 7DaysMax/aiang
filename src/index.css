@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./bui.css";
 @custom-variant dark (&:where(.dark, .dark *));
 
 @font-face {
@@ -51,7 +52,7 @@
     --border: 214 20% 90%;
     --input: 240 5.9% 90%;
     --ring: 240 5.9% 10%;
-    --radius: 0.5rem;
+    --radius: 10px;
     --muted-icon: 240 2% 79%;
     --chart-1: 24.6 95% 53.1%;
     --chart-2: 160 60% 45%;
@@ -113,26 +114,26 @@
 
 @theme {
   --breakpoint-3xl: 125rem;
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --color-muted-icon: hsl(var(--muted-icon));
+  --color-border: var(--line);
+  --color-input: var(--field);
+  --color-ring: var(--accent);
+  --color-background: var(--page);
+  --color-foreground: var(--ink);
+  --color-primary: var(--ink);
+  --color-primary-foreground: var(--canvas);
+  --color-secondary: var(--inset);
+  --color-secondary-foreground: var(--ink);
+  --color-destructive: var(--red);
+  --color-destructive-foreground: var(--canvas);
+  --color-muted: var(--hover);
+  --color-muted-foreground: var(--ink-2);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--canvas);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--ink);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--ink);
+  --color-muted-icon: var(--ink-3);
   --color-logo: var(--logo);
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 2px);
@@ -152,9 +153,10 @@
   }
 
   body {
-    background-color: var(--color-background);
-    color: var(--color-foreground);
+    background-color: var(--page);
+    color: var(--ink);
     font-family: "Body", sans-serif;
+    letter-spacing: -0.01em;
     /* font-weight: ; */
     margin: 0;
     min-height: 100dvh;

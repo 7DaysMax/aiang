@@ -90,15 +90,22 @@ export function StageCheckbox({
 export function DiffFileStat({
   additions,
   deletions,
+  mimeType,
   className,
 }: {
   additions?: number
   deletions?: number
+  mimeType?: string
   className?: string
 }) {
   const hasAdditions = (additions ?? 0) > 0
   const hasDeletions = (deletions ?? 0) > 0
-  if (!hasAdditions && !hasDeletions) return null
+  if (!hasAdditions && !hasDeletions) {
+    if (mimeType?.startsWith("image/") || mimeType?.startsWith("audio/") || mimeType?.startsWith("video/") || mimeType?.startsWith("model/")) {
+      return <span className={cn("whitespace-nowrap text-[11px] text-muted-foreground", className)}>二进制</span>
+    }
+    return null
+  }
 
   return (
     <span className={cn("whitespace-nowrap text-xs font-mono", className)}>

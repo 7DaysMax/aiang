@@ -113,6 +113,12 @@ describe("migrateChatPreferencesState", () => {
           planMode: false,
           autoPlan: false,
         },
+        youmi: {
+          model: "deepseek-v4-flash",
+          modelOptions: { reasoningEffort: "max", fastMode: false },
+          planMode: false,
+          autoPlan: false,
+        },
         pi: {
           model: "~anthropic/claude-fable-latest",
           modelOptions: { reasoningEffort: "medium" },
@@ -626,5 +632,23 @@ describe("chat preference store", () => {
       planMode: true,
       autoPlan: false,
     })
+  })
+
+  test("tracks collaboration per chat and copies it onto a new chat", () => {
+    const store = useChatPreferencesStore.getState()
+    expect(store.getChatCollaboration(NEW_CHAT_COMPOSER_ID)).toBe(false)
+
+    store.setChatCollaboration(NEW_CHAT_COMPOSER_ID, true)
+    expect(useChatPreferencesStore.getState().getChatCollaboration(NEW_CHAT_COMPOSER_ID)).toBe(true)
+
+    store.initializeComposerForChat("chat-collab", { sourceChatId: NEW_CHAT_COMPOSER_ID })
+    expect(useChatPreferencesStore.getState().getChatCollaboration("chat-collab")).toBe(true)
+
+    store.setChatCollaboration("chat-collab", false)
+    expect(useChatPreferencesStore.getState().getChatCollaboration("chat-collab")).toBe(false)
+    expect(useChatPreferencesStore.getState().getChatCollaboration(NEW_CHAT_COMPOSER_ID)).toBe(true)
+
+    store.copyChatCollaboration(NEW_CHAT_COMPOSER_ID, "chat-copy")
+    expect(useChatPreferencesStore.getState().getChatCollaboration("chat-copy")).toBe(true)
   })
 })

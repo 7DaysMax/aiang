@@ -11,6 +11,10 @@ import {
   type ProviderPreferenceInput,
 } from "../shared/provider-preferences"
 import {
+  normalizeModelProfiles,
+  normalizeThirdPartyAccess,
+} from "../shared/model-profile"
+import {
   DEFAULT_NEW_PROJECTS_DIRECTORY,
   type AppSettingsPatch,
   type AppSettingsSnapshot,
@@ -61,6 +65,9 @@ interface AppSettingsFile {
   visionService?: unknown
   memoryEnabled?: unknown
   memoryMaxChats?: unknown
+  thirdPartyAccess?: unknown
+  activeModelProfileId?: unknown
+  modelProfiles?: unknown
 }
 
 // devbox is a server-runtime fact (the --cloud flag), not settings state.
@@ -143,7 +150,7 @@ function normalizeChatSoundId(value: unknown): ChatSoundId {
 }
 
 function normalizeDefaultProvider(value: unknown): DefaultProviderPreference {
-  return value === "claude" || value === "codex" || value === "cursor" || value === "pi" || value === "deepseek" || value === "last_used"
+  return value === "claude" || value === "codex" || value === "cursor" || value === "pi" || value === "deepseek" || value === "reasonix" || value === "youmi" || value === "last_used"
     ? value
     : "last_used"
 }
@@ -218,6 +225,9 @@ function toFilePayload(state: AppSettingsState) {
     visionService: state.visionService,
     memoryEnabled: state.memoryEnabled,
     memoryMaxChats: state.memoryMaxChats,
+    thirdPartyAccess: state.thirdPartyAccess,
+    activeModelProfileId: state.activeModelProfileId,
+    modelProfiles: state.modelProfiles,
   }
 }
 
@@ -243,6 +253,9 @@ function toSnapshot(state: AppSettingsState, devbox = false): AppSettingsSnapsho
     visionService: state.visionService,
     memoryEnabled: state.memoryEnabled,
     memoryMaxChats: state.memoryMaxChats,
+    thirdPartyAccess: state.thirdPartyAccess,
+    activeModelProfileId: state.activeModelProfileId,
+    modelProfiles: state.modelProfiles,
     warning: state.warning,
     filePathDisplay: state.filePathDisplay,
   }
@@ -306,6 +319,21 @@ function normalizeAppSettings(
     warnings.push("memoryMaxChats must be a number")
   }
 
+  const thirdPartyAccess = normalizeThirdPartyAccess(source?.thirdPartyAccess)
+  if (source?.thirdPartyAccess !== undefined && source.thirdPartyAccess !== "official" && source.thirdPartyAccess !== "relay") {
+    warnings.push("thirdPartyAccess must be official or relay")
+  }
+  const modelProfiles = normalizeModelProfiles(source?.modelProfiles)
+  if (source?.modelProfiles !== undefined && !Array.isArray(source.modelProfiles)) {
+    warnings.push("modelProfiles must be an array")
+  }
+  const rawActiveProfileId = typeof source?.activeModelProfileId === "string"
+    ? source.activeModelProfileId.trim()
+    : ""
+  const activeModelProfileId = rawActiveProfileId && modelProfiles.some((profile) => profile.id === rawActiveProfileId)
+    ? rawActiveProfileId
+    : (modelProfiles[0]?.id ?? null)
+
   const rawNewProjectsDirectory = typeof source?.newProjectsDirectory === "string"
     ? source.newProjectsDirectory.trim()
     : ""
@@ -345,6 +373,9 @@ function normalizeAppSettings(
     visionService: rawVisionService,
     memoryEnabled,
     memoryMaxChats,
+    thirdPartyAccess,
+    activeModelProfileId,
+    modelProfiles,
     warning: null,
     filePathDisplay: formatDisplayPath(filePath),
   }
@@ -383,6 +414,11 @@ function toComparablePayload(source: AppSettingsFile) {
     setupDismissed: source.setupDismissed,
     dockMetrics: source.dockMetrics,
     visionService: source.visionService,
+    memoryEnabled: source.memoryEnabled,
+    memoryMaxChats: source.memoryMaxChats,
+    thirdPartyAccess: source.thirdPartyAccess,
+    activeModelProfileId: source.activeModelProfileId,
+    modelProfiles: source.modelProfiles,
   }
 }
 

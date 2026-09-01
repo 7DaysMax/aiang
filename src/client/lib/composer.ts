@@ -8,6 +8,8 @@ import {
   normalizeClaudeFastMode,
   normalizeCodexModelId,
   normalizeCodexReasoningEffort,
+  normalizeDeepSeekModelId,
+  normalizeDeepSeekReasoningEffort,
   PI_REASONING_OPTIONS,
   supportsClaudeMaxReasoningEffort,
   type AgentProvider,
@@ -52,7 +54,32 @@ export function applyModelToComposerState(state: ComposerState, model: string): 
       },
     }
   }
+  if (state.provider === "deepseek" || state.provider === "reasonix" || state.provider === "youmi") {
+    const normalizedModel = normalizeDeepSeekModelId(model)
+    return {
+      ...state,
+      model: normalizedModel,
+      modelOptions: {
+        ...state.modelOptions,
+        reasoningEffort: normalizeDeepSeekReasoningEffort(state.modelOptions.reasoningEffort),
+        fastMode: false,
+      },
+    }
+  }
   if (state.provider !== "claude") return { ...state, model }
+  // Claude 入口的 DeepSeek V4：思考档位走官方 low/high/max，切模型时不要丢 max。
+  if (model.startsWith("deepseek-")) {
+    return {
+      ...state,
+      model,
+      modelOptions: {
+        ...state.modelOptions,
+        reasoningEffort: normalizeDeepSeekReasoningEffort(state.modelOptions.reasoningEffort),
+        contextWindow: "200k",
+        fastMode: false,
+      },
+    }
+  }
   return {
     ...state,
     model,
@@ -60,6 +87,10 @@ export function applyModelToComposerState(state: ComposerState, model: string): 
       ...state.modelOptions,
       contextWindow: normalizeClaudeContextWindow(model, state.modelOptions.contextWindow),
       fastMode: normalizeClaudeFastMode(model, state.modelOptions.fastMode),
+      // 从 DeepSeek 切回 Claude 时，若当前是 max 且目标模型不支持，夹回 high。
+      reasoningEffort: !supportsClaudeMaxReasoningEffort(model) && state.modelOptions.reasoningEffort === "max"
+        ? "high"
+        : state.modelOptions.reasoningEffort,
     },
   }
 }
@@ -124,6 +155,14 @@ export function getEffectiveComposerState(
         provider: "reasonix",
         model: providerDefaults.reasonix.model,
         modelOptions: { ...providerDefaults.reasonix.modelOptions },
+        planMode: composerState.planMode,
+        autoPlan: composerState.autoPlan,
+      }
+    case "youmi":
+      return {
+        provider: "youmi",
+        model: providerDefaults.youmi.model,
+        modelOptions: { ...providerDefaults.youmi.modelOptions },
         planMode: composerState.planMode,
         autoPlan: composerState.autoPlan,
       }
@@ -258,7 +297,7 @@ export function deriveComposerOptionControls(
               })))
           : state.provider === "pi"
             ? [...PI_REASONING_OPTIONS]
-            : state.provider === "deepseek"
+            : state.provider === "deepseek" || state.provider === "reasonix" || state.provider === "youmi"
               ? [...DEEPSEEK_REASONING_OPTIONS]
               : [...getCodexReasoningOptions(state.model)]
       ) as ComposerOptionChoice[],

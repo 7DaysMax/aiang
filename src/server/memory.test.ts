@@ -1,6 +1,18 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { TranscriptEntry } from "../shared/types"
-import { buildMemorySystemHint, buildMemoryText, loadMemorySystemHint, resetMemoryCacheForTests } from "./memory"
+import {
+  appendProjectMemoryNote,
+  buildMemorySystemHint,
+  buildMemoryText,
+  buildProjectMemoryText,
+  extractTurnMemory,
+  loadMemorySystemHint,
+  persistTurnMemoryFromChat,
+  resetMemoryCacheForTests,
+} from "./memory"
 
 function entry(overrides: Partial<TranscriptEntry> & { kind: "user_prompt" | "assistant_text"; text?: string }): TranscriptEntry {
   return {
@@ -64,7 +76,7 @@ describe("buildMemorySystemHint", () => {
   test("wraps memory in a system-message block", () => {
     const hint = buildMemorySystemHint("[会话] 修 bug\n用户：…")
     expect(hint).toContain("<system-message>")
-    expect(hint).toContain("历史对话记忆")
+    expect(hint).toContain("本机记忆")
     expect(hint).toContain("[会话] 修 bug")
     expect(hint).toContain("</system-message>")
   })
@@ -79,5 +91,66 @@ describe("loadMemorySystemHint", () => {
       getMessages: () => [],
     })
     expect(hint).toBe("")
+  })
+})
+
+describe("extractTurnMemory", () => {
+  test("captures the last user turn, assistant wrap-up, and edited files", () => {
+    const note = extractTurnMemory(
+      [
+        entry({ kind: "user_prompt", content: "修一下端口占用" }),
+        {
+          kind: "tool_call",
+          hidden: false,
+          tool: { toolName: "Edit", input: { file_path: "src/server.ts" } },
+        } as unknown as TranscriptEntry,
+        entry({ kind: "assistant_text", text: "已改监听地址并重启" }),
+      ],
+      { chatId: "c1", title: "端口" },
+    )
+    expect(note?.user).toContain("端口占用")
+    expect(note?.assistant).toContain("监听地址")
+    expect(note?.files).toEqual(["src/server.ts"])
+  })
+
+  test("returns null without a user prompt", () => {
+    expect(extractTurnMemory([entry({ kind: "assistant_text", text: "hi" })], { chatId: "c1", title: "t" })).toBeNull()
+  })
+})
+
+describe("project memory files", () => {
+  test("appends notes and formats them for injection", () => {
+    const dir = mkdtempSync(join(tmpdir(), "aiang-memory-"))
+    try {
+      appendProjectMemoryNote("proj-1", {
+        at: 1,
+        chatId: "c1",
+        title: "修 bug",
+        user: "ws 挂了",
+        assistant: "端口被占用",
+        files: ["src/ws.ts"],
+      }, dir)
+      const text = buildProjectMemoryText([{
+        at: 1,
+        chatId: "c1",
+        title: "修 bug",
+        user: "ws 挂了",
+        assistant: "端口被占用",
+        files: ["src/ws.ts"],
+      }])
+      expect(text).toContain("[回合] 修 bug")
+      expect(text).toContain("文件：src/ws.ts")
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("persist is a no-op when memory is disabled", () => {
+    persistTurnMemoryFromChat({
+      listProjects: () => [],
+      listChatsByProject: () => [],
+      getMessages: () => [entry({ kind: "user_prompt", content: "hi" })],
+      getChat: () => ({ id: "c1", projectId: "p1", title: "t" }),
+    }, "c1")
   })
 })

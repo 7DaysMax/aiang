@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Navigate, Outlet, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom"
 import { Flower } from "lucide-react"
 import { StandaloneShareDialog } from "../components/chat-ui/StandaloneShareDialog"
-import { CommandPalette } from "../components/command-palette/CommandPalette"
 import { DropProjectDialog } from "../components/DropProjectDialog"
 import { AppDialogProvider } from "../components/ui/app-dialog"
 import { Button } from "../components/ui/button"
@@ -17,19 +16,42 @@ import { useDeepSeekBalanceStore } from "../stores/deepSeekBalanceStore"
 import { useDeepSeekStatusStore } from "../stores/deepSeekStatusStore"
 import { useCodexInstallStore } from "../stores/codexInstallStore"
 import { useAppSettingsStore } from "../stores/appSettingsStore"
-import { SetupWizard } from "../components/auth/SetupWizard"
 import type { ChatTouchedFilesResult, ProviderAuthSnapshot } from "../../shared/types"
 import { playChatNotificationSound, shouldPlayChatSound } from "../lib/chatSounds"
 import { getBrowserWindowTitle, getChatSoundBurstCount } from "./chatNotifications"
 import { KannaSidebar } from "./KannaSidebar"
 import { ReleaseBanner } from "../components/ReleaseBanner"
+import { DesktopTitlebar, useIsDesktopShell } from "../components/DesktopTitlebar"
 import { ChatPage } from "./ChatPage"
-import { LocalProjectsPage } from "./LocalProjectsPage"
-import { OpenRouterCallbackPage } from "./OpenRouterCallbackPage"
-import { SettingsPage } from "./SettingsPage"
-import { TerminalPage } from "./TerminalPage"
 import { useKannaState } from "./useKannaState"
 import type { AppSettingsSnapshot } from "../../shared/types"
+
+const CommandPalette = lazy(() =>
+  import("../components/command-palette/CommandPalette").then((module) => ({ default: module.CommandPalette })),
+)
+const SetupWizard = lazy(() =>
+  import("../components/auth/SetupWizard").then((module) => ({ default: module.SetupWizard })),
+)
+const SettingsPage = lazy(() =>
+  import("./SettingsPage").then((module) => ({ default: module.SettingsPage })),
+)
+const LocalProjectsPage = lazy(() =>
+  import("./LocalProjectsPage").then((module) => ({ default: module.LocalProjectsPage })),
+)
+const TerminalPage = lazy(() =>
+  import("./TerminalPage").then((module) => ({ default: module.TerminalPage })),
+)
+const OpenRouterCallbackPage = lazy(() =>
+  import("./OpenRouterCallbackPage").then((module) => ({ default: module.OpenRouterCallbackPage })),
+)
+
+function RouteFallback() {
+  return (
+    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+      加载中…
+    </div>
+  )
+}
 
 const AUTH_STATUS_RETRY_DELAY_MS = 500
 
@@ -84,7 +106,7 @@ function PasswordScreen({
           <div className="flex items-center gap-3">
             <Flower className="h-5 w-5 text-logo" />
             <div>
-              <CardTitle className="font-logo text-xl uppercase text-slate-600 dark:text-slate-100">{APP_NAME}</CardTitle>
+              <CardTitle className="font-logo text-xl text-slate-600 dark:text-slate-100">{APP_NAME}</CardTitle>
             </div>
           </div>
           <CardDescription className="leading-6">
@@ -235,7 +257,10 @@ function KannaLayout() {
   // "Set up later" and a completed run are both persisted per machine
   // (server settings, not this browser's localStorage) and suppress future
   // launches everywhere, so we also wait for `setupLoaded` before deciding.
-  const hasDeepSeekKey = useAppSettingsStore((store) => Boolean(store.settings?.deepseekApiKey))
+  const hasDeepSeekKey = useAppSettingsStore((store) => {
+    if (store.settings?.deepseekApiKey) return true
+    return Boolean(store.settings?.modelProfiles?.some((profile) => profile.apiKey && profile.baseUrl && profile.modelId))
+  })
   const setupLoaded = useProviderAuthStore((store) => store.setupLoaded)
   const setupLaunchDecidedRef = useRef(false)
   useEffect(() => {
@@ -415,16 +440,38 @@ function KannaLayout() {
     void playChatNotificationSound(chatSoundId, burstCount).catch(() => undefined)
   }, [chatSoundId, chatSoundPreference, state.appSettings, state.sidebarData])
 
+  const desktopShell = useIsDesktopShell()
+  const setupWizardOpen = useProviderAuthStore((store) => store.setupWizardOpen)
+  const [commandPaletteReady, setCommandPaletteReady] = useState(false)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setCommandPaletteReady(true), 0)
+    return () => window.clearTimeout(timer)
+  }, [])
+
   return (
-    <div className="flex h-[100dvh] min-h-[100dvh] flex-col overflow-hidden">
+    <div className={desktopShell
+      ? "flex h-[100dvh] min-h-[100dvh] flex-col overflow-hidden pt-9"
+      : "flex h-[100dvh] min-h-[100dvh] flex-col overflow-hidden"}
+    >
+      <DesktopTitlebar />
       <ReleaseBanner />
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {sidebarElement}
-        <Outlet context={state} />
+        <Suspense fallback={<RouteFallback />}>
+          <Outlet context={state} />
+        </Suspense>
       </div>
-      <SetupWizard />
+      {setupWizardOpen ? (
+        <Suspense fallback={null}>
+          <SetupWizard />
+        </Suspense>
+      ) : null}
       <DropProjectDialog state={state} />
-      <CommandPalette state={state} />
+      {commandPaletteReady ? (
+        <Suspense fallback={null}>
+          <CommandPalette state={state} />
+        </Suspense>
+      ) : null}
       <StandaloneShareDialog
         open={Boolean(state.standaloneShareUrl)}
         shareUrl={state.standaloneShareUrl ?? ""}
@@ -460,7 +507,14 @@ export function App() {
       <AppDialogProvider>
         <Routes>
           {/* Rendered outside the layout: opened as a bare OAuth popup. */}
-          <Route path="/oauth/openrouter/callback" element={<OpenRouterCallbackPage />} />
+          <Route
+            path="/oauth/openrouter/callback"
+            element={(
+              <Suspense fallback={<RouteFallback />}>
+                <OpenRouterCallbackPage />
+              </Suspense>
+            )}
+          />
           <Route element={<KannaLayout />}>
             <Route path="/" element={<LocalProjectsPage />} />
             <Route path="/settings" element={<Navigate to="/settings/general" replace />} />

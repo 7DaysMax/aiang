@@ -24,6 +24,7 @@ const PROVIDER_LABELS: Record<AgentProvider, string> = {
   pi: "Pi",
   deepseek: "DeepSeek",
   reasonix: "Reasonix",
+  youmi: "Youmi",
 }
 
 function formatInstallCount(count: number) {

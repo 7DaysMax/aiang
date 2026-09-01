@@ -264,6 +264,7 @@ function createWorld(options?: { projectPath?: string }) {
     },
     discardFile: async () => ({ snapshotChanged: false }),
     ignoreFile: async () => ({ snapshotChanged: false }),
+    acceptSnapshotBaseline: async () => ({ snapshotChanged: false }),
     readPatch: async () => ({ patch: "" }),
   }
 

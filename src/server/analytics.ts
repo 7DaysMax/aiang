@@ -25,7 +25,7 @@ type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<
 type AnalyticsEnvironment = "dev" | "prod"
 
 function isAnalyticsLoggingEnabled() {
-  return process.env.KANNA_LOG_ANALYTICS === "1"
+  return process.env.AIANG_LOG_ANALYTICS === "1" || process.env.KANNA_LOG_ANALYTICS === "1"
 }
 
 export interface AnalyticsReporter {

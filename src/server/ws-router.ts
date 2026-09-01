@@ -31,7 +31,8 @@ import { detectCodex, installCodex } from "./codex-install"
 import { applyPiFaveModels } from "./provider-catalog"
 import { readProjectQuickActions, writeProjectQuickActions } from "./project-quick-actions"
 import { fetchHotSkills, installSkill, listGlobalSkillsWithSources, listInstalledSkills, searchSkills, uninstallSkill } from "./skills"
-import { installPluginFromMarketplace, listInstalledPlugins, uninstallPlugin } from "./plugin-store"
+import { fetchPluginCommunity } from "./plugin-community"
+import { installPluginFromGithub, installMcpPlugin, installPluginFromMarketplace, listInstalledPlugins, uninstallPlugin } from "./plugin-store"
 import { writeStandaloneTranscriptExport } from "./standalone-export"
 import { TerminalManager } from "./terminal-manager"
 import type { WorktreeProbe } from "./worktree-probe"
@@ -82,7 +83,7 @@ interface CreateWsRouterArgs {
   /** Codex 引擎一键安装（可注入用于测试）。 */
   installCodexImpl?: typeof installCodex
   store: EventStore
-  diffStore: Pick<DiffStore, "getProjectSnapshot" | "getSnapshotVersion" | "refreshSnapshot" | "initializeGit" | "getGitHubPublishInfo" | "checkGitHubRepoAvailability" | "publishToGitHub" | "listBranches" | "previewMergeBranch" | "mergeBranch" | "syncBranch" | "checkoutBranch" | "createBranch" | "generateCommitMessage" | "commitFiles" | "discardFile" | "ignoreFile" | "readPatch">
+  diffStore: Pick<DiffStore, "getProjectSnapshot" | "getSnapshotVersion" | "refreshSnapshot" | "initializeGit" | "getGitHubPublishInfo" | "checkGitHubRepoAvailability" | "publishToGitHub" | "listBranches" | "previewMergeBranch" | "mergeBranch" | "syncBranch" | "checkoutBranch" | "createBranch" | "generateCommitMessage" | "commitFiles" | "discardFile" | "ignoreFile" | "acceptSnapshotBaseline" | "readPatch">
   worktreeProbe: Pick<WorktreeProbe, "getStates" | "getRepoLabels" | "getProjectsWithoutRepo">
   agent: AgentCoordinator
   terminals: TerminalManager
@@ -1132,7 +1133,7 @@ export function createWsRouter({
           return
         }
         case "codex.install": {
-          const result = await installCodexImpl()
+          const result = await installCodexImpl({ force: command.force === true })
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
           return
         }
@@ -1175,11 +1176,35 @@ export function createWsRouter({
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: listInstalledPlugins() })
           return
         }
+        case "plugin.community": {
+          const result = await fetchPluginCommunity(command.query)
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
+          return
+        }
         case "plugin.install": {
           const result = await installPluginFromMarketplace({
             marketplace: command.marketplace,
             marketplaceIsLocal: command.marketplaceIsLocal,
             pluginName: command.pluginName,
+          })
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
+          return
+        }
+        case "plugin.installGithub": {
+          const result = await installPluginFromGithub({
+            repo: command.repo,
+            description: command.description,
+          })
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
+          return
+        }
+        case "plugin.installMcp": {
+          const result = installMcpPlugin({
+            name: command.name,
+            description: command.description,
+            command: command.command,
+            mcpArgs: command.args,
+            url: command.url,
           })
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
           return
@@ -1561,6 +1586,16 @@ export function createWsRouter({
               projectId: project.id,
               projectPath: project.localPath,
               path: command.path,
+            })
+            return { result, changed: result.snapshotChanged }
+          })
+          return
+        }
+        case "chat.acceptSnapshotBaseline": {
+          await handleChatGitCommand(ws, id, command.chatId, async (project) => {
+            const result = await diffStore.acceptSnapshotBaseline({
+              projectId: project.id,
+              projectPath: project.localPath,
             })
             return { result, changed: result.snapshotChanged }
           })

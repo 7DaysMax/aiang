@@ -3,12 +3,12 @@ import { createInterface } from "node:readline"
 import { randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { join } from "node:path"
 import type { Readable, Writable } from "node:stream"
 import { normalizeToolCall } from "../shared/tools"
 import type { ContextWindowUsageSnapshot, NormalizedToolCall } from "../shared/types"
 import { asNumber, asRecord, asString } from "../shared/json"
+import { resolveAppVendorDir } from "./app-root"
 import type { HarnessEvent, HarnessToolRequest } from "./harness-types"
 import { AsyncQueue } from "./async-queue"
 import { timestamped } from "./transcript"
@@ -47,7 +47,7 @@ export function resolveReasonixExecutable(): string {
   if (override) return override
 
   const binaryName = process.platform === "win32" ? "reasonix.exe" : "reasonix"
-  const vendored = join(dirname(fileURLToPath(import.meta.url)), `../../vendor/reasonix/${binaryName}`)
+  const vendored = resolveAppVendorDir("reasonix", binaryName)
   if (existsSync(vendored)) return vendored
 
   throw new Error(

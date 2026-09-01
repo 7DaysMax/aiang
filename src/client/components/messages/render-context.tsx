@@ -14,6 +14,7 @@ export interface TranscriptRenderOptions {
    * bundles still carry it inline and leave this null.
    */
   loadEntryDebugRaw: ((entryId: string) => Promise<string | null>) | null
+  onCollaborationRetry?: (summary: string) => void
 }
 
 const DEFAULT_RENDER_OPTIONS: TranscriptRenderOptions = {
@@ -21,6 +22,7 @@ const DEFAULT_RENDER_OPTIONS: TranscriptRenderOptions = {
   localLinkMode: "open",
   attachmentMode: "live",
   loadEntryDebugRaw: null,
+  onCollaborationRetry: undefined,
 }
 
 const TranscriptRenderOptionsContext = createContext<TranscriptRenderOptions>(DEFAULT_RENDER_OPTIONS)

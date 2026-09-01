@@ -38,6 +38,8 @@ type SettingsRowProps = {
   children: ReactNode
   bordered?: boolean
   alignStart?: boolean
+  /** Stretch the control under the title instead of the cramped right column. */
+  fullWidth?: boolean
   /** Overrides `def.description` when the rendered description is dynamic JSX. */
   description?: ReactNode
 } & (
@@ -60,6 +62,7 @@ export function SettingsRow({
   children,
   bordered = true,
   alignStart = false,
+  fullWidth = false,
 }: SettingsRowProps) {
   return (
     <div
@@ -69,15 +72,23 @@ export function SettingsRow({
     >
       <div
         className={cn(
-          "flex flex-col gap-4 py-5 md:flex-row md:flex-wrap md:justify-between md:gap-x-8 md:gap-y-3",
-          alignStart ? "md:items-start" : "md:items-center"
+          "flex flex-col gap-4 py-5",
+          !fullWidth && "md:flex-row md:flex-wrap md:justify-between md:gap-x-8 md:gap-y-3",
+          !fullWidth && (alignStart ? "md:items-start" : "md:items-center"),
         )}
       >
-        <div className="min-w-0 max-w-xl md:grow md:basis-72">
+        <div className={cn("min-w-0", fullWidth ? "w-full" : "max-w-xl md:grow md:basis-72")}>
           <div className="text-sm font-medium text-foreground">{title ?? def?.title}</div>
           <div className="mt-1 break-words text-[13px] text-muted-foreground">{description ?? def?.description}</div>
         </div>
-        <div className="flex items-center justify-start md:max-w-full md:shrink-0 md:justify-end">{children}</div>
+        <div
+          className={cn(
+            "flex items-center justify-start",
+            fullWidth ? "w-full" : "md:max-w-full md:shrink-0 md:justify-end",
+          )}
+        >
+          {children}
+        </div>
       </div>
     </div>
   )

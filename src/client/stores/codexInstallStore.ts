@@ -12,7 +12,7 @@ interface CodexInstallState {
   socket: KannaSocket | null
   setSocket: (socket: KannaSocket | null) => void
   detect: () => Promise<void>
-  install: () => Promise<void>
+  install: (force?: boolean) => Promise<void>
 }
 
 export const useCodexInstallStore = create<CodexInstallState>((set, get) => ({
@@ -34,12 +34,12 @@ export const useCodexInstallStore = create<CodexInstallState>((set, get) => ({
       set({ checking: false, lastError: error instanceof Error ? error.message : String(error) })
     }
   },
-  install: async () => {
+  install: async (force = false) => {
     const socket = get().socket
     if (!socket) return
     set({ installing: true, lastError: null })
     try {
-      const result = await socket.command<CodexInstallResult>({ type: "codex.install" })
+      const result = await socket.command<CodexInstallResult>({ type: "codex.install", force })
       set({ lastInstallResult: result, installing: false })
       if (result.ok) {
         await get().detect()

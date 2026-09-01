@@ -20,6 +20,7 @@ import { CodexAppServerManager } from "./codex-app-server"
 import { KannaAnalyticsReporter } from "./analytics"
 import { AppSettingsManager } from "./app-settings"
 import { UsageLimitsManager } from "./usage-limits"
+import { resolveAppDistClientDir } from "./app-root"
 import { fetchDeepSeekBalance } from "./deepseek-agent"
 import { DiffStore } from "./diff-store"
 import { WorktreeProbe } from "./worktree-probe"
@@ -32,6 +33,7 @@ import { readLlmProviderSnapshot, validateLlmProviderCredentials, writeLlmProvid
 import { applyPiFaveModels } from "./provider-catalog"
 import { createProcessAuthDeps, ProviderAuthManager } from "./provider-auth"
 import { fetchLatestPackageVersion } from "./cli-runtime"
+import { ensureCursorAgentOnProcessPath } from "./process-utils"
 import { getMachineDisplayName } from "./machine-name"
 import { TerminalManager } from "./terminal-manager"
 import { UpdateManager } from "./update-manager"
@@ -42,9 +44,12 @@ import { syncCcbSkillsFromAgents } from "./skills"
 import { instanceFingerprint } from "./instance"
 import { deleteProjectUpload, inferAttachmentContentType, inferProjectFileContentType, persistProjectUpload } from "./uploads"
 import {
+  FILE_SIZE_HEADER,
+  FILE_TRUNCATED_HEADER,
   handleProjectCompile,
   handleProjectFileWrite,
   handleProjectTree,
+  MAX_PROJECT_FILE_BYTES,
 } from "./project-files"
 import { handleBrowserProxy } from "./browser-proxy"
 import { getProjectUploadDir } from "./paths"
@@ -203,7 +208,9 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   // Dev-box UI flag: the real thing is `kanna --cloud`; KANNA_DEVBOX_UI=1 is
   // the dev-mode override (`bun run dev:cloud`) so the UI is developable
   // without a cloud identity.
-  const devboxUi = Boolean(options.directCloud) || process.env.KANNA_DEVBOX_UI === "1"
+  const devboxUi = Boolean(options.directCloud)
+    || process.env.AIANG_DEVBOX_UI === "1"
+    || process.env.KANNA_DEVBOX_UI === "1"
   const appSettings = new AppSettingsManager(path.join(store.dataDir, "settings.json"), { devbox: devboxUi })
   await appSettings.initialize()
   await keybindings.initialize()
@@ -248,6 +255,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   agent.setClaudeRateLimitListener((info) => usageLimits.recordClaudeRateLimitPush(info))
   codexManager.setRateLimitsListener((snapshot) => usageLimits.recordCodexRateLimitPush(snapshot))
 
+  ensureCursorAgentOnProcessPath()
   const providerAuth = new ProviderAuthManager({
     ...createProcessAuthDeps(),
     readLlmProvider: readLlmProviderSnapshot,
@@ -363,7 +371,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
       console.warn(`${LOG_PREFIX} touched-file backfill failed:`, error)
     })
 
-  const distDir = path.join(import.meta.dir, "..", "..", "dist", "client")
+  const distDir = resolveAppDistClientDir()
 
   const MAX_PORT_ATTEMPTS = 20
   let actualPort = port
@@ -788,18 +796,28 @@ async function handleProjectFileContent(req: Request, url: URL, store: EventStor
   }
 
   const file = Bun.file(filePath)
+  let size: number
   try {
     const info = await stat(filePath)
     if (!info.isFile()) {
       return Response.json({ error: "File not found" }, { status: 404 })
     }
+    size = info.size
   } catch {
     return Response.json({ error: "File not found" }, { status: 404 })
   }
 
-  return new Response(file, {
+  // The viewer turns this body into a string, so an uncapped response means a
+  // multi-hundred-MB artifact gets streamed to the browser and then handed to
+  // the editor as text, which locks the tab up. Cap it and say so in a header;
+  // the cut can land mid-codepoint, which decodes to a replacement character
+  // and is the right trade for a preview.
+  const truncated = size > MAX_PROJECT_FILE_BYTES
+  return new Response(truncated ? file.slice(0, MAX_PROJECT_FILE_BYTES) : file, {
     headers: {
       "Content-Type": inferProjectFileContentType(relativePath, file.type),
+      [FILE_SIZE_HEADER]: String(size),
+      ...(truncated ? { [FILE_TRUNCATED_HEADER]: "1" } : {}),
     },
   })
 }

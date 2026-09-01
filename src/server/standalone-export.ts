@@ -10,6 +10,7 @@ import type {
   TranscriptEntry,
 } from "../shared/types"
 import { APP_VERSION } from "../shared/branding"
+import { resolveAppExportViewerDir } from "./app-root"
 import { getProjectExportDir } from "./paths"
 
 const STANDALONE_TRANSCRIPT_BUNDLE_VERSION = 1 as const
@@ -70,7 +71,7 @@ interface PreparedMessagesResult {
 type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 
 export function getStandaloneViewerDistDir() {
-  return path.join(import.meta.dir, "..", "..", "dist", "export-viewer")
+  return resolveAppExportViewerDir()
 }
 
 export async function writeStandaloneTranscriptExport(

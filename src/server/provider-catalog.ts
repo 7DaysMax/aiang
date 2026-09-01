@@ -23,6 +23,7 @@ import {
   normalizeClaudeFastMode,
   normalizeCodexReasoningEffort,
   normalizeDeepSeekReasoningEffort,
+  normalizeYoumiReasoningEffort,
   normalizePiReasoningEffort,
   normalizeProviderModelId,
   isClaudeReasoningEffort,
@@ -52,14 +53,20 @@ function createServerProviders(): ProviderCatalogEntry[] {
 export const SERVER_PROVIDERS: ProviderCatalogEntry[] = createServerProviders()
 
 /**
- * UI 端拿到的 provider 目录：DeepSeek 为默认底层模型（魔改 ccb 引擎跑
- * DeepSeek V4），Reasonix 为 Go 原生引擎（同样跑 DeepSeek V4），Claude 为
- * 官方 Claude Code 引擎（Anthropic 原版），Codex 为本机 codex CLI /
- * ChatGPT 登录态。内部目录（SERVER_PROVIDERS）保留全量。
+ * UI 端拿到的 provider 目录，按家族排序：
+ * 原生 = Claude / Cursor / Codex 原版；第三方 = Youmi / ccb / Reasonix / Pi。
  */
 export function getVisibleProviders(): ProviderCatalogEntry[] {
   const byId = new Map(SERVER_PROVIDERS.map((provider) => [provider.id, provider]))
-  const visible = [byId.get("deepseek"), byId.get("reasonix"), byId.get("claude"), byId.get("codex")]
+  const visible = [
+    byId.get("claude"),
+    byId.get("cursor"),
+    byId.get("codex"),
+    byId.get("youmi"),
+    byId.get("deepseek"),
+    byId.get("reasonix"),
+    byId.get("pi"),
+  ]
   return visible.filter((provider): provider is ProviderCatalogEntry => Boolean(provider))
 }
 
@@ -339,6 +346,19 @@ export function normalizeDeepSeekModelOptions(
   const reasoningEffort = modelOptions?.deepseek?.reasoningEffort
   return {
     reasoningEffort: normalizeDeepSeekReasoningEffort(
+      isDeepSeekReasoningEffort(reasoningEffort) ? reasoningEffort : legacyEffort,
+    ),
+    fastMode: false,
+  }
+}
+
+export function normalizeYoumiModelOptions(
+  modelOptions?: ModelOptions,
+  legacyEffort?: string,
+): import("../shared/types").YoumiModelOptions {
+  const reasoningEffort = modelOptions?.youmi?.reasoningEffort
+  return {
+    reasoningEffort: normalizeYoumiReasoningEffort(
       isDeepSeekReasoningEffort(reasoningEffort) ? reasoningEffort : legacyEffort,
     ),
     fastMode: false,

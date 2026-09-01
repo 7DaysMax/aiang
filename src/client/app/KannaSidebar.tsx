@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
-import { Activity, Flower, House, Loader2, PanelLeft, Search, X, Menu, Plus, Settings, SquarePen, Terminal } from "lucide-react"
+import { Flower, House, Loader2, PanelLeft, Search, X, Menu, Plus, Settings, SquarePen, Terminal } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { Button } from "../components/ui/button"
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog"
@@ -31,8 +31,6 @@ import { SIDEBAR_VIEW_STORAGE_KEY, SIDEBAR_WIDTH_STORAGE_KEY } from "../lib/stor
 import { useAppSettingsStore } from "../stores/appSettingsStore"
 import { OPEN_COMMAND_PALETTE_EVENT, openCommandPalette } from "../components/command-palette/CommandPalette"
 import { APP_VERSION } from "../../shared/branding"
-import { useDeepSeekStatusStore } from "../stores/deepSeekStatusStore"
-import { STATUS_COLORS, STATUS_LABELS } from "./settings/StatusSection"
 
 export const DEFAULT_SIDEBAR_WIDTH = 275
 export const MIN_SIDEBAR_WIDTH = 220
@@ -436,38 +434,10 @@ function KannaSidebarImpl({
   }, [data.projectGroups, newSidebarProjectsView])
 
   const isSettingsActive = location.pathname.startsWith("/settings")
-  const isStatusPageActive = location.pathname === "/settings/status"
   const isUtilityPageActive = isLocalProjectsActive || isSettingsActive
   const isConnecting = connectionStatus === "connecting" || !ready
   const statusLabel = isConnecting ? "连接中" : connectionStatus === "connected" ? "已连接" : "未连接"
   const statusDotClass = connectionStatus === "connected" ? "bg-emerald-500" : "bg-amber-500"
-  const serviceStatus = useDeepSeekStatusStore((s) => s.status)
-  const serviceStatusFailed = useDeepSeekStatusStore((s) => s.failed)
-  const refreshDeepSeekStatus = useDeepSeekStatusStore((s) => s.refresh)
-  const serviceStatusLabel = serviceStatus?.ok
-    ? (STATUS_LABELS[serviceStatus.overallStatus] ?? "未知")
-    : serviceStatusFailed
-      ? "获取失败"
-      : "加载中…"
-  const serviceStatusDot = serviceStatus?.ok
-    ? (STATUS_COLORS[serviceStatus.overallStatus] ?? "bg-muted-foreground/40")
-    : "bg-muted-foreground/40"
-  const serviceStatusLoadedRef = useRef(false)
-  useEffect(() => {
-    if (!serviceStatusLoadedRef.current) {
-      serviceStatusLoadedRef.current = true
-      void refreshDeepSeekStatus()
-    }
-  }, [refreshDeepSeekStatus])
-  // 首次拉取失败时自动重试，直到拿到真实状态。
-  useEffect(() => {
-    if (serviceStatusFailed && !serviceStatus?.ok && ready) {
-      const timer = window.setTimeout(() => {
-        void refreshDeepSeekStatus()
-      }, 15_000)
-      return () => window.clearTimeout(timer)
-    }
-  }, [serviceStatusFailed, serviceStatus, ready, refreshDeepSeekStatus])
   const showUpdateButton = updateSnapshot?.updateAvailable === true
   const showDevBadge = updateSnapshot
     ? updateSnapshot.latestVersion === `${updateSnapshot.currentVersion}-dev`
@@ -785,39 +755,14 @@ function KannaSidebarImpl({
           <button
             type="button"
             onClick={() => {
-              navigate("/settings/status")
-              onClose()
-              void refreshDeepSeekStatus(true)
-            }}
-            className={cn(
-              "mb-1 w-full rounded-xl rounded-t-md border px-3 py-2 text-left transition-colors",
-              isStatusPageActive
-                ? "bg-muted border-border"
-                : "border-border/0 hover:bg-muted hover:border-border active:bg-muted/80"
-            )}
-          >
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <Activity className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm">DP 状态</span>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>{serviceStatusLabel}</span>
-                <span className={cn("h-2 w-2 rounded-full", serviceStatusDot)} />
-              </div>
-            </div>
-          </button>
-          <button
-            type="button"
-            onClick={() => {
               navigate("/settings/general")
               onClose()
             }}
             className={cn(
-              "w-full rounded-xl rounded-t-md border px-3 py-2 text-left transition-colors",
+              "mx-0.5 flex h-8 w-[calc(100%-4px)] items-center rounded-[8px] px-2 text-left text-[13px] transition-colors",
               isSettingsActive
-                ? "bg-muted border-border"
-                : "border-border/0 hover:bg-muted hover:border-border active:bg-muted/80"
+                ? "bg-hover-2 text-ink"
+                : "text-ink-2 hover:bg-hover-2 hover:text-ink"
             )}
           >
             <div className="flex items-center justify-between gap-2">

@@ -1,4 +1,4 @@
-import { Activity, BookText, Command, FlaskConical, Gauge, MessageSquareQuote, Settings2, type LucideIcon } from "lucide-react"
+import { Activity, BookText, Command, FlaskConical, Gauge, MessageSquareQuote, Puzzle, Settings2, type LucideIcon } from "lucide-react"
 
 /**
  * Single source of truth for settings navigation targets.
@@ -24,10 +24,16 @@ export const SETTINGS_SECTIONS = [
     subtitle: "管理从技能锁文件安装的全局 Agent 技能。",
   },
   {
+    id: "plugins",
+    label: "插件",
+    icon: Puzzle as LucideIcon,
+    subtitle: "强力 MCP、官方目录、GitHub mcp-server 与 DSH 社区，挂到 Youmi 引擎。",
+  },
+  {
     id: "providers",
     label: "模型服务",
     icon: MessageSquareQuote as LucideIcon,
-    subtitle: "配置 DeepSeek API Key、默认模型与快速回复模型。",
+    subtitle: "按服务商保存多套配置，点选即可切换。Claude / Codex / Youmi / ccb / Reasonix 共用当前档案；Cursor 只走原版登录。",
   },
   {
     id: "keybindings",
@@ -146,11 +152,17 @@ export const SETTINGS_ROWS = defineRows({
   },
 
   // Providers
+  modelProfiles: {
+    sectionId: "providers",
+    title: "模型档案",
+    description: "按 DeepSeek、OpenRouter、Anthropic 等服务商保存多套配置，点一下就能切换。Claude、Codex、Youmi、ccb、Reasonix 共用当前选用的档案。",
+    keywords: ["档案", "中转", "openai", "anthropic", "deepseek", "openrouter", "千问", "glm", "moonshot", "模型"],
+  },
   deepseekApiKey: {
     sectionId: "providers",
     title: "DeepSeek API Key",
-    description: "用于连接 DeepSeek API 的密钥，保存在本机设置文件中。",
-    keywords: ["api key", "密钥", "deepseek"],
+    description: "旧版回退：没有档案时，Youmi / ccb 仍可读这个 Key。",
+    keywords: ["api key", "密钥", "deepseek", "回退"],
   },
   visionService: {
     sectionId: "providers",
@@ -158,17 +170,35 @@ export const SETTINGS_ROWS = defineRows({
     description: "DeepSeek V4 是文本模型，贴图时由千问/GLM 视觉模型把图片转成文字描述（describe_image MCP 工具）。",
     keywords: ["识图", "视觉", "图片", "截图", "qwen", "glm", "mcp"],
   },
+  claudeEngine: {
+    sectionId: "providers",
+    title: "Claude 引擎",
+    description: "原版 Claude Code CLI。有新版本时不会自动升级，由你选择是否更新。",
+    keywords: ["claude", "引擎", "安装", "升级", "版本"],
+  },
   codexEngine: {
     sectionId: "providers",
     title: "Codex 引擎",
-    description: "Codex agent 引擎（codex CLI）。未安装时点击一键安装，自动配置为 DeepSeek V4 官方 API。",
-    keywords: ["codex", "引擎", "安装", "agent"],
+    description: "安装官方 Codex CLI。有新版本时不会自动升级，由你选择是否更新。当前模型档案会写入 ~/.codex。",
+    keywords: ["codex", "引擎", "安装", "升级", "版本", "agent"],
+  },
+  cursorEngine: {
+    sectionId: "providers",
+    title: "Cursor 引擎",
+    description: "通过本机 cursor-agent 控制 Cursor。有新版本时不会自动升级，由你选择是否更新。",
+    keywords: ["cursor", "cursor-agent", "引擎", "安装", "升级", "版本", "登录", "kanna"],
   },
   defaultProvider: {
     sectionId: "providers",
-    title: "默认服务商",
-    description: "新建对话使用的默认模型服务商（Aiang 仅支持 DeepSeek）。",
-    keywords: ["服务商", "引擎"],
+    title: "默认引擎",
+    description: "新建对话的默认引擎。原生：Claude / Cursor / Codex；第三方：Youmi / ccb / Reasonix / Pi。",
+    keywords: ["服务商", "引擎", "youmi", "cursor", "原生", "第三方"],
+  },
+  youmiDefaults: {
+    sectionId: "providers",
+    title: "Youmi 默认设置",
+    description: "Youmi 引擎（PenguinHarness）的默认模型与思考档位；Glob/Grep 等能力由插件提供。",
+    keywords: ["模型", "youmi", "penguin", "插件"],
   },
   deepseekDefaults: {
     sectionId: "providers",
@@ -176,11 +206,24 @@ export const SETTINGS_ROWS = defineRows({
     description: "使用 DeepSeek 时的默认模型设置。",
     keywords: ["模型", "deepseek"],
   },
+  cursorDefaults: {
+    sectionId: "providers",
+    title: "Cursor 默认设置",
+    description: "使用 Cursor 引擎（cursor-agent）时的默认模型与快速模式。",
+    keywords: ["模型", "cursor", "composer", "fast"],
+  },
   modelRegistry: {
     sectionId: "providers",
     title: "快速回复模型",
     description: "对话命名、提交信息生成等快速回复使用的模型端点与 API Key。",
     keywords: ["api key", "base url", "llm provider", "模型端点"],
+  },
+
+  youmiPlugins: {
+    sectionId: "plugins",
+    title: "Youmi 插件",
+    description: "强力 MCP、官方 MCP 目录、GitHub mcp-server 与 DSH 社区。引擎仍是 Youmi。",
+    keywords: ["plugin", "插件", "mcp", "playwright", "github", "glob", "grep", "marketplace", "harness", "dsh", "社区"],
   },
 
   // Labs

@@ -169,6 +169,7 @@ describe("EventStore", () => {
       model: "claude-sonnet-4-6",
       planMode: true,
       autoPlan: false,
+      collaboration: true,
     })
 
     expect(store.getQueuedMessages(chat.id).map((message) => message.content)).toEqual([
@@ -182,6 +183,7 @@ describe("EventStore", () => {
       "first queued",
       "second queued",
     ])
+    expect(reloaded.getQueuedMessages(chat.id)[1]?.collaboration).toBe(true)
 
     await reloaded.removeQueuedMessage(chat.id, first.id)
     expect(reloaded.getQueuedMessages(chat.id).map((message) => message.id)).toEqual([second.id])

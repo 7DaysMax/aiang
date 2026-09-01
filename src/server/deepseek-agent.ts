@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
 import { getClaudeConfigDir, getSettingsFilePath } from "../shared/branding"
 import { isPlausibleApiKey } from "../shared/api-key"
 import type {
@@ -10,6 +9,7 @@ import type {
   DeepSeekConnectionTestResult,
   DeepSeekPromptOptimizeResult,
 } from "../shared/types"
+import { resolveAppVendorDir } from "./app-root"
 import type { HarnessEvent, HarnessTurn } from "./harness-types"
 import { AsyncQueue } from "./async-queue"
 import { timestamped } from "./transcript"
@@ -91,7 +91,7 @@ export function resolveCcbExecutable(): string {
 
   // Windows 用交叉编译的 PE 版（vendor/ccb/ccb-bin.exe），其余平台用原生版。
   const binaryName = process.platform === "win32" ? "ccb-bin.exe" : "ccb-bin"
-  const vendored = join(dirname(fileURLToPath(import.meta.url)), `../../vendor/ccb/${binaryName}`)
+  const vendored = resolveAppVendorDir("ccb", binaryName)
   if (existsSync(vendored)) return vendored
 
   throw new Error(
@@ -117,7 +117,12 @@ export function ccbSdkModel(model: string): string {
  * 注意：OPENAI_MODEL 必须保持干净模型名（不能带 [1m]），主 OpenAI 通道
  * 原样透传该变量给 chat.completions.create，带后缀会被 DeepSeek API 拒绝。
  */
-export function buildCcbEnv(apiKey: string, model?: string, effort?: string): Record<string, string> {
+export function buildCcbEnv(
+  apiKey: string,
+  model?: string,
+  effort?: string,
+  endpoint?: { baseUrl?: string },
+): Record<string, string> {
   const configDir = getClaudeConfigDir(homedir())
   try {
     mkdirSync(configDir, { recursive: true })
@@ -125,7 +130,7 @@ export function buildCcbEnv(apiKey: string, model?: string, effort?: string): Re
 
   return {
     CLAUDE_CODE_USE_OPENAI: "1",
-    OPENAI_BASE_URL: process.env.AIANG_BASE_URL ?? DEEPSEEK_BASE_URL,
+    OPENAI_BASE_URL: endpoint?.baseUrl || process.env.AIANG_BASE_URL || DEEPSEEK_BASE_URL,
     OPENAI_MODEL: process.env.AIANG_MODEL ?? model ?? DEFAULT_DEEPSEEK_MODEL,
     OPENAI_API_KEY: apiKey,
     CLAUDE_CONFIG_DIR: configDir,
@@ -150,7 +155,7 @@ export function buildCcbEnv(apiKey: string, model?: string, effort?: string): Re
  */
 export function vendoredRgPath(): string | null {
   const binaryName = process.platform === "win32" ? "rg.exe" : "rg"
-  const candidate = join(dirname(fileURLToPath(import.meta.url)), "../../vendor/ccb", binaryName)
+  const candidate = resolveAppVendorDir("ccb", binaryName)
   return existsSync(candidate) ? candidate : null
 }
 

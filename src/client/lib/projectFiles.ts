@@ -39,12 +39,20 @@ export async function listProjectTree(projectId: string, dir: string): Promise<P
   return snapshot.entries
 }
 
-export async function readProjectFileText(projectId: string, filePath: string): Promise<{ text: string; truncated: boolean }> {
+export async function readProjectFileText(
+  projectId: string,
+  filePath: string,
+): Promise<{ text: string; truncated: boolean; size: number | null }> {
   const response = await fetch(`/api/projects/${encodeURIComponent(projectId)}/files/${encodeURIComponent(filePath)}/content`)
   if (!response.ok) {
     throw new Error(`读取失败：${response.status} ${response.statusText}`)
   }
-  return { text: await response.text(), truncated: false }
+  const size = Number(response.headers.get("x-aiang-file-size"))
+  return {
+    text: await response.text(),
+    truncated: response.headers.get("x-aiang-truncated") === "1",
+    size: Number.isFinite(size) && size > 0 ? size : null,
+  }
 }
 
 export async function writeProjectFile(projectId: string, filePath: string, content: string): Promise<void> {
@@ -75,6 +83,7 @@ const BINARY_EXTENSIONS = new Set([
   "png", "jpg", "jpeg", "gif", "webp", "ico", "bmp", "avif",
   "pdf", "zip", "gz", "tgz", "tar", "7z", "rar", "wasm", "woff", "woff2", "ttf", "otf",
   "mp3", "mp4", "mov", "webm", "wav", "aac", "flac", "ogg", "db", "sqlite", "lock",
+  "glb", "gltf", "fbx", "obj", "stl", "3ds", "dae", "blend", "usd", "usdz", "pmx", "vrm",
 ])
 
 export function isProbablyTextFile(filePath: string): boolean {

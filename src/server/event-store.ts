@@ -1530,6 +1530,7 @@ export class EventStore {
       modelOptions: message.modelOptions,
       planMode: message.planMode,
       autoPlan: message.autoPlan,
+      collaboration: message.collaboration,
     }
     const event: QueuedMessageEvent = {
       v: STORE_VERSION,

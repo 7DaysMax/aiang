@@ -1,6 +1,7 @@
-import { Loader2, X } from "lucide-react"
+import { X } from "lucide-react"
 import { MetaRow, MetaContent } from "./shared"
-import { AnimatedShinyText } from "../ui/animated-shiny-text"
+import { PixelLoader } from "../bui/PixelLoader"
+import { Shimmer } from "../bui/atoms/Shimmer"
 
 const STATUS_LABELS: Record<string, string> = {
   connecting: "连接中…",
@@ -24,13 +25,15 @@ export function ProcessingMessage({ status }: ProcessingMessageProps) {
     <MetaRow className="ml-[1px] mt-3">
       <MetaContent>
         {isFailed ? (
-          <X className="size-4.5 text-red-500" />
+          <X className="size-4.5 text-red" />
         ) : (
-          <Loader2 className="size-4.5 animate-spin text-muted-icon" />
+          <PixelLoader />
         )}
-        <AnimatedShinyText className="ml-[1px] text-sm" shimmerWidth={44}>
-          {label}
-        </AnimatedShinyText>
+        {isFailed ? (
+          <span className="ml-[1px] text-sm text-red">{label}</span>
+        ) : (
+          <Shimmer className="ml-[1px] text-sm">{label}</Shimmer>
+        )}
       </MetaContent>
     </MetaRow>
   )

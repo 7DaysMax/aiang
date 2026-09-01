@@ -975,4 +975,37 @@ describe("install", () => {
     expect(installCall?.argv[2]).toContain("cursor-agent")
     expect(installCall?.argv[2]).toContain("update")
   })
+
+  test("Windows Cursor install uses the official PowerShell script when missing", async () => {
+    const harness = createHarness({
+      exec: signedOutExec,
+      platform: "win32",
+      paths: { "cursor-agent": null },
+    })
+    await harness.manager.refresh({ force: true })
+    await harness.manager.install("cursor")
+    const installCall = harness.execCalls.find((call) => call.argv[0] === "powershell.exe")
+    expect(installCall?.argv).toEqual([
+      "powershell.exe",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      "irm 'https://cursor.com/install?win32=true' | iex",
+    ])
+  })
+
+  test("Windows Cursor install updates the existing CLI without bash", async () => {
+    const harness = createHarness({
+      exec: signedOutExec,
+      platform: "win32",
+      paths: { "cursor-agent": "C:\\\\Users\\\\me\\\\AppData\\\\Local\\\\cursor-agent\\\\cursor-agent.cmd" },
+    })
+    await harness.manager.refresh({ force: true })
+    await harness.manager.install("cursor")
+    expect(harness.execCalls.some((call) => call.argv[0] === "sh" || call.argv[0] === "bash")).toBe(false)
+    expect(harness.execCalls.some((call) =>
+      call.argv[0]?.includes("cursor-agent") && call.argv[1] === "update"
+    )).toBe(true)
+  })
 })

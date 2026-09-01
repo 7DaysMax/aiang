@@ -51,6 +51,7 @@ interface GitPanelProps extends DiffFileActions {
   onCreateBranch: () => Promise<void>
   onGenerateCommitMessage: (args: { paths: string[] }) => Promise<{ subject: string; body: string }>
   onInitializeGit: () => Promise<unknown>
+  onAcceptSnapshotBaseline?: () => Promise<void> | void
   onGetGitHubPublishInfo: () => Promise<GitHubPublishInfo>
   onCheckGitHubRepoAvailability: (args: { owner: string; name: string }) => Promise<GitHubRepoAvailabilityResult>
   onSetupGitHub: (args: { owner: string; name: string; visibility: "public" | "private"; description: string }) => Promise<unknown>
@@ -72,24 +73,24 @@ export function getPrimaryCommitActionPrefix(args: {
   if (args.hasSummary) {
     if (args.isCommitting) {
       if (args.isGeneratedCommitInFlight) {
-        return args.commitModeInFlight === "commit_only" ? "Committing..." : "Pushing..."
+        return args.commitModeInFlight === "commit_only" ? "正在提交…" : "正在推送…"
       }
-      return args.commitModeInFlight === "commit_only" ? "Committing..." : "Committing & Pushing..."
+      return args.commitModeInFlight === "commit_only" ? "正在提交…" : "正在提交并推送…"
     }
-    return args.primaryCommitMode === "commit_only" ? "Commit to" : "Commit & push to"
+    return args.primaryCommitMode === "commit_only" ? "提交到" : "提交并推送到"
   }
 
   if (args.isGenerating) {
-    return "Generating..."
+    return "正在生成…"
   }
-  return args.primaryCommitMode === "commit_only" ? "Generate & commit to" : "Generate & push to"
+  return args.primaryCommitMode === "commit_only" ? "生成并提交到" : "生成并推送到"
 }
 
 function formatFetchTooltip(isoTimestamp?: string) {
   if (!isoTimestamp) {
-    return "No local fetch recorded"
+    return "尚未在本地执行过 fetch"
   }
-  return `Last fetched ${formatRelativeTime(isoTimestamp)}`
+  return `上次 fetch：${formatRelativeTime(isoTimestamp)}`
 }
 
 function GitPanelImpl({
@@ -112,6 +113,7 @@ function GitPanelImpl({
   onCreateBranch,
   onGenerateCommitMessage,
   onInitializeGit,
+  onAcceptSnapshotBaseline,
   onGetGitHubPublishInfo,
   onCheckGitHubRepoAvailability,
   onSetupGitHub,
@@ -242,7 +244,7 @@ function GitPanelImpl({
     && hasSummary
     && !isBusy
   const primaryCommitMode: DiffCommitMode = hasRemoteOrigin ? "commit_and_push" : "commit_only"
-  const resolvedBranchName = diffs.branchName ?? "current branch"
+  const resolvedBranchName = diffs.branchName ?? "当前分支"
   const primaryCommitActionPrefix = getPrimaryCommitActionPrefix({
     hasSummary,
     isGenerating,
@@ -443,7 +445,7 @@ function GitPanelImpl({
                             })
                           }}
                           onKeyDown={handleCommitKeyDown}
-                          placeholder="Commit message"
+                          placeholder="提交信息"
                           className="rounded-t-xl rounded-b-none px-3 pr-10"
                           disabled={isBusy || diffs.status !== "ready"}
                         />
@@ -451,7 +453,7 @@ function GitPanelImpl({
                           <TooltipTrigger asChild>
                             <button
                               type="button"
-                              aria-label="Generate commit message"
+                              aria-label="生成提交信息"
                               className="absolute right-1.5 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
                               disabled={!canGenerate}
                               onClick={() => void handleGenerate()}
@@ -463,7 +465,7 @@ function GitPanelImpl({
                               )}
                             </button>
                           </TooltipTrigger>
-                          <TooltipContent>Generate commit message</TooltipContent>
+                          <TooltipContent>生成提交信息</TooltipContent>
                         </Tooltip>
                       </div>
                       <Textarea
@@ -476,7 +478,7 @@ function GitPanelImpl({
                           })
                         }}
                         onKeyDown={handleCommitKeyDown}
-                        placeholder="Description"
+                        placeholder="详细描述"
                         rows={5}
                         className="-mt-px rounded-t-none rounded-b-xl px-3 outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0 focus-visible:border-border mb-2"
                         disabled={isBusy || diffs.status !== "ready"}
@@ -529,7 +531,7 @@ function GitPanelImpl({
                                 void handleCommit("commit_only")
                               }}
                             >
-                              Commit Only
+                              仅提交
                             </ContextMenuItem>
                           </ContextMenuContent>
                         ) : null}
@@ -572,7 +574,7 @@ function GitPanelImpl({
                 className="h-7 gap-1.5 px-3 text-xs"
               >
                 <Github className="h-3.5 w-3.5" />
-                <span>Push to GitHub</span>
+                <span>推送到 GitHub</span>
               </Button>
             ) : syncAction === "publish" ? (
               <Button
@@ -583,7 +585,7 @@ function GitPanelImpl({
                 className="h-7 gap-1.5 px-2 text-xs hover:!bg-transparent hover:!border-border/0"
               >
                 {isSyncing ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                <span>Publish Branch</span>
+                <span>发布分支</span>
               </Button>
             ) : (
               <div className="flex items-center gap-1">
@@ -598,7 +600,7 @@ function GitPanelImpl({
                         className="h-7 gap-1.5 px-2 text-xs hover:!bg-transparent hover:!border-border/0"
                       >
                         {isSyncing ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-                        <span>Fetch</span>
+                        <span>拉取更新</span>
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>{formatFetchTooltip(diffs.lastFetchedAt)}</TooltipContent>
@@ -612,7 +614,7 @@ function GitPanelImpl({
                     className="h-7 gap-1.5 px-2 text-xs hover:!bg-transparent hover:!border-border/0"
                   >
                     {isSyncing ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
-                    <span>Pull</span>
+                    <span>合并到本地</span>
                     <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-muted px-1 text-[10px] text-muted-foreground">
                       {behindCount}
                     </span>
@@ -627,7 +629,7 @@ function GitPanelImpl({
                     className="h-7 gap-1.5 px-2 text-xs"
                   >
                     {isSyncing ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                    <span>Push</span>
+                    <span>推送</span>
                     <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-primary-foreground/15 px-1 text-[10px] text-primary-foreground">
                       {aheadCount}
                     </span>
@@ -660,19 +662,13 @@ function GitPanelImpl({
                     <StageCheckbox
                       checked={allSelected}
                       mixed={someSelected}
-                      label={
-                        someSelected
-                          ? "Select all files for commit"
-                          : allSelected
-                            ? "Unselect all files from commit"
-                            : "Select all files for commit"
-                      }
+                      label={allSelected && !someSelected ? "取消全选" : "全选待提交文件"}
                       onClick={() => {
                         if (!projectId || diffs.files.length === 0) return
                         setAllCheckedPaths(projectId, filePaths, someSelected ? true : !allSelected)
                       }}
                     />
-                    <span>{selectedCount} files</span>
+                    <span>已选 {selectedCount} 个文件</span>
                   </div>
                 ) : <div />}
                 <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2">
@@ -686,10 +682,10 @@ function GitPanelImpl({
                       size="sm"
                       optionClassName="flex-1 justify-center"
                       options={isSnapshotMode
-                        ? [{ value: "changes", label: "Changes" }]
+                        ? [{ value: "changes", label: "改动" }]
                         : [
-                            { value: "changes", label: "Changes"},
-                            { value: "history", label: "History" },
+                            { value: "changes", label: "改动"},
+                            { value: "history", label: "历史" },
                           ]}
                     />
                   </div>
@@ -697,21 +693,21 @@ function GitPanelImpl({
                 {viewMode === "changes" ? (
                   <div className="flex items-center gap-1">
                     <IconButton
-                      label="Unified diff"
+                      label="单栏对比"
                       active={diffRenderMode === "unified"}
                       onClick={() => onDiffRenderModeChange("unified")}
                     >
                       <Rows3 className="h-4 w-4" />
                     </IconButton>
                     <IconButton
-                      label="Side-by-side diff"
+                      label="双栏对比"
                       active={diffRenderMode === "split"}
                       onClick={() => onDiffRenderModeChange("split")}
                     >
                       <Columns2 className="h-4 w-4" />
                     </IconButton>
                     <IconButton
-                      label={wrapLines ? "Disable word wrap" : "Enable word wrap"}
+                      label={wrapLines ? "关闭自动换行" : "开启自动换行"}
                       active={wrapLines}
                       onClick={() => onWrapLinesChange(!wrapLines)}
                     >
@@ -726,19 +722,28 @@ function GitPanelImpl({
             {diffs.status === "no_repo" ? (
               <div className="flex h-full items-center justify-center px-6 py-3 text-center">
                 <div className="flex max-w-[280px] flex-col items-center gap-3">
-                  <p className="text-sm text-muted-foreground">Initialize git here to start tracking branches, diffs, and history.</p>
+                  <p className="text-sm text-muted-foreground">在此初始化 git，即可跟踪分支、改动与提交历史。</p>
                   <Button size="sm" onClick={() => void onInitializeGit()}>
-                    Init Git
+                    初始化 Git
                   </Button>
                 </div>
               </div>
             ) : isSnapshotMode ? (
               <div className="flex h-full flex-col">
-                <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
-                  <span>本地快照跟踪：文件改动自动记录，可直接撤销，无需 git。</span>
-                  <Button size="sm" onClick={() => void onInitializeGit()}>
-                    Init Git
-                  </Button>
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+                  <span className="min-w-0 flex-1">
+                    本地快照：相对基线的改动。接受基线后清空列表，下次只显示新改动。
+                  </span>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {diffs.files.length > 0 && onAcceptSnapshotBaseline ? (
+                      <Button size="sm" variant="secondary" onClick={() => void onAcceptSnapshotBaseline()}>
+                        接受为基线
+                      </Button>
+                    ) : null}
+                    <Button size="sm" variant="outline" onClick={() => void onInitializeGit()}>
+                      初始化 Git
+                    </Button>
+                  </div>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto">
                   {diffs.files.length === 0 ? (
@@ -751,7 +756,7 @@ function GitPanelImpl({
             ) : effectiveViewMode === "history" ? (
               branchHistory.length === 0 ? (
                 <div className="flex h-full items-center justify-center px-6 py-3 text-center">
-                  <p className="text-sm text-muted-foreground">No recent commits on {diffs.branchName ?? "this branch"}.</p>
+                  <p className="text-sm text-muted-foreground">{diffs.branchName ?? "该分支"} 上暂无最近提交。</p>
                 </div>
               ) : (
                 <div className="divide-y divide-border pt-1.5">
@@ -760,7 +765,7 @@ function GitPanelImpl({
               )
             ) : diffs.files.length === 0 ? (
               <div className="flex h-full items-center justify-center px-6 py-3 text-center">
-                <p className="text-sm text-muted-foreground">No file changes.</p>
+                <p className="text-sm text-muted-foreground">暂无文件改动。</p>
               </div>
             ) : diffFilesList}
           </div>

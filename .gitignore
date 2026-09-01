@@ -4,6 +4,7 @@ package-lock.json
 
 # build output
 dist/
+release/
 
 # environment / secrets
 .env

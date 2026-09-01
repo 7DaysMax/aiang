@@ -89,6 +89,9 @@ const DEFAULT_APP_SETTINGS_SNAPSHOT: AppSettingsSnapshot = {
   },
   memoryEnabled: false,
   memoryMaxChats: 5,
+  thirdPartyAccess: "official",
+  activeModelProfileId: null,
+  modelProfiles: [],
   dockMetrics: {
     balance: true,
     cacheHitRate: true,
@@ -155,6 +158,15 @@ const DEFAULT_APP_SETTINGS_SNAPSHOT: AppSettingsSnapshot = {
       planMode: false,
       autoPlan: false,
     },
+    youmi: {
+      model: "deepseek-v4-flash",
+      modelOptions: {
+        reasoningEffort: "max",
+        fastMode: false,
+      },
+      planMode: false,
+      autoPlan: false,
+    },
     pi: {
       model: "~anthropic/claude-fable-latest",
       modelOptions: {
@@ -165,7 +177,7 @@ const DEFAULT_APP_SETTINGS_SNAPSHOT: AppSettingsSnapshot = {
     },
   },
   newSidebarEnabled: false,
-  newProjectsDirectory: "~/Kanna",
+  newProjectsDirectory: "~/YoumiAiagent",
   warning: null,
   filePathDisplay: "~/.kanna/data/settings.json",
 }
@@ -351,6 +363,7 @@ function createFakeDiffStore(overrides: Record<string, unknown> = {}): CreateWsR
     commitFiles: async () => ({ ok: true, mode: "commit_only", branchName: undefined, pushed: false, snapshotChanged: false }),
     discardFile: async () => ({ snapshotChanged: false }),
     ignoreFile: async () => ({ snapshotChanged: false }),
+    acceptSnapshotBaseline: async () => ({ snapshotChanged: false }),
     readPatch: async () => ({ patch: "" }),
     ...overrides,
   } as never

@@ -105,10 +105,10 @@ export function BranchSwitcher({
         <button
           type="button"
           className="flex min-w-0 max-w-full items-center gap-1 rounded-md px-1.5 py-1 text-sm transition-colors hover:bg-accent hover:text-foreground"
-          aria-label="Open branch switcher"
+          aria-label="打开分支切换器"
         >
           <GitBranch className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">{currentBranchName ?? "Detached HEAD"}</span>
+          <span className="truncate">{currentBranchName ?? "分离 HEAD"}</span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0" />
         </button>
       </PopoverTrigger>
@@ -117,7 +117,7 @@ export function BranchSwitcher({
           <BranchSearchInput
             value={query}
             onChange={setQuery}
-            placeholder={entryView === "pull_requests" ? "Search pull requests" : "Search branches"}
+            placeholder={entryView === "pull_requests" ? "搜索 Pull Request" : "搜索分支"}
             disabled={isLoading || isMutating}
             trailingAction={(
               <Button
@@ -127,7 +127,7 @@ export function BranchSwitcher({
                 disabled={isLoading || isMutating}
                 className="h-7 px-2 text-xs hover:!bg-transparent hover:!border-border/0"
               >
-                + New
+                + 新建
               </Button>
             )}
           />
@@ -138,28 +138,28 @@ export function BranchSwitcher({
             className="w-full"
             optionClassName="flex-1 justify-center"
             options={[
-              { value: "branches", label: "Branches" },
-              { value: "pull_requests", label: `Open PRs ${totalPullRequestCount}` },
+              { value: "branches", label: "分支" },
+              { value: "pull_requests", label: `开放 PR ${totalPullRequestCount}` },
             ]}
           />
           <div className="max-h-[420px] overflow-y-auto pr-1.5 -mr-[8px]">
             {isLoading ? (
               <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
                 <LoaderCircle className="h-4 w-4 animate-spin" />
-                <span>Loading branches…</span>
+                <span>正在加载分支…</span>
               </div>
             ) : error ? (
               <div className="rounded-lg border border-border px-3 py-2 text-sm text-muted-foreground">{error}</div>
             ) : entryView === "pull_requests" ? (
               <BranchListSection
-                title="Open PRs"
+                title="开放 PR"
                 entries={pullRequests}
                 emptyLabel={
                   branchList?.pullRequestsStatus === "error"
-                    ? branchList.pullRequestsError ?? "Could not load pull requests."
+                    ? branchList.pullRequestsError ?? "无法加载 Pull Request。"
                     : branchList?.pullRequestsStatus === "unavailable"
-                      ? "Pull requests unavailable for this repository."
-                      : "No open pull requests."
+                      ? "该仓库暂不支持 Pull Request。"
+                      : "没有开放的 Pull Request。"
                 }
                 disabled={isMutating}
                 stickyTitle
@@ -170,9 +170,9 @@ export function BranchSwitcher({
             ) : (
               <div className="space-y-3">
                 <BranchListSection
-                  title="Recent"
+                  title="最近"
                   entries={recent}
-                  emptyLabel="No recent branches."
+                  emptyLabel="没有最近使用的分支。"
                   disabled={isMutating}
                   stickyTitle
                   onSelect={(entry) => {
@@ -180,9 +180,9 @@ export function BranchSwitcher({
                   }}
                 />
                 <BranchListSection
-                  title="Local"
+                  title="本地"
                   entries={local}
-                  emptyLabel="No local branches."
+                  emptyLabel="没有本地分支。"
                   disabled={isMutating}
                   stickyTitle
                   onSelect={(entry) => {
@@ -190,9 +190,9 @@ export function BranchSwitcher({
                   }}
                 />
                 <BranchListSection
-                  title="Remote"
+                  title="远程"
                   entries={remote}
-                  emptyLabel="No remote branches."
+                  emptyLabel="没有远程分支。"
                   disabled={isMutating}
                   stickyTitle
                   onSelect={(entry) => {
@@ -212,7 +212,7 @@ export function BranchSwitcher({
             >
               <span className="block max-w-full truncate">
                 <GitMerge className="mr-1.5 inline h-3.5 w-3.5 shrink-0" />
-                Merge branch into {currentName}...
+                合并分支到 {currentName}…
               </span>
             </Button>
           ) : null}

@@ -1,7 +1,11 @@
+import { DEFAULT_NEW_PROJECT_ROOT } from "./branding"
+import type { EngineFamily } from "./engine-family"
+import type { ModelProfile, ThirdPartyAccessMode } from "./model-profile"
+
 export const STORE_VERSION = 2 as const
 export const PROTOCOL_VERSION = 1 as const
 
-export type AgentProvider = "claude" | "codex" | "cursor" | "pi" | "deepseek" | "reasonix"
+export type AgentProvider = "claude" | "codex" | "cursor" | "pi" | "deepseek" | "reasonix" | "youmi"
 export type LlmProviderKind = "openai" | "openrouter" | "custom"
 export type AppThemePreference = "light" | "dark" | "system"
 export type ChatSoundPreference = "never" | "unfocused" | "always"
@@ -126,7 +130,7 @@ export interface HarnessSkill {
 export interface ChatSkillsSnapshot {
   provider: AgentProvider
   skills: HarnessSkill[]
-  /** "live" = enumerated from the running harness; "filesystem" = Kanna's own disk scan (cold start / fallback). */
+  /** "live" = enumerated from the running harness; "filesystem" = Youmi's own disk scan (cold start / fallback). */
   origin: "live" | "filesystem"
 }
 
@@ -191,6 +195,7 @@ export interface QueuedChatMessage {
   modelOptions?: ModelOptions
   planMode?: boolean
   autoPlan?: boolean
+  collaboration?: boolean
 }
 
 export interface ProviderModelOption {
@@ -310,6 +315,12 @@ export interface ReasonixModelOptions {
   fastMode: boolean
 }
 
+/** Youmi 引擎（PenguinHarness · 编程）与 DeepSeek 通道共享同一套思考档位。 */
+export interface YoumiModelOptions {
+  reasoningEffort: DeepSeekReasoningEffort
+  fastMode: boolean
+}
+
 export interface ProviderModelOptionsByProvider {
   claude: ClaudeModelOptions
   codex: CodexModelOptions
@@ -317,6 +328,7 @@ export interface ProviderModelOptionsByProvider {
   pi: PiModelOptions
   deepseek: DeepSeekModelOptions
   reasonix: ReasonixModelOptions
+  youmi: YoumiModelOptions
 }
 
 export interface ProviderPreference<TModelOptions> {
@@ -370,6 +382,7 @@ export type ChatProviderPreferences = {
   pi: ProviderPreference<PiModelOptions>
   deepseek: ProviderPreference<DeepSeekModelOptions>
   reasonix: ProviderPreference<ReasonixModelOptions>
+  youmi: ProviderPreference<YoumiModelOptions>
 }
 
 export type ModelOptions = Partial<{
@@ -404,6 +417,12 @@ export const DEFAULT_DEEPSEEK_MODEL_OPTIONS = {
   fastMode: false,
 } as const satisfies DeepSeekModelOptions
 
+/** Youmi 默认拉满思考（max）；映射到 PenguinHarness 的 xhigh。 */
+export const DEFAULT_YOUMI_MODEL_OPTIONS = {
+  reasoningEffort: "max",
+  fastMode: false,
+} as const satisfies YoumiModelOptions
+
 export function isClaudeReasoningEffort(value: unknown): value is ClaudeReasoningEffort {
   return CLAUDE_REASONING_OPTIONS.some((option) => option.id === value)
 }
@@ -422,6 +441,10 @@ export function isDeepSeekReasoningEffort(value: unknown): value is DeepSeekReas
 
 export function normalizeDeepSeekReasoningEffort(effort?: unknown): DeepSeekReasoningEffort {
   return isDeepSeekReasoningEffort(effort) ? effort : DEFAULT_DEEPSEEK_MODEL_OPTIONS.reasoningEffort
+}
+
+export function normalizeYoumiReasoningEffort(effort?: unknown): DeepSeekReasoningEffort {
+  return isDeepSeekReasoningEffort(effort) ? effort : DEFAULT_YOUMI_MODEL_OPTIONS.reasoningEffort
 }
 
 // Pi accepts any OpenRouter model id verbatim — unlike the other providers there
@@ -512,6 +535,8 @@ export function resolveModelLabel(models: ReadonlyArray<ProviderModelOption> | u
 export interface ProviderCatalogEntry {
   id: AgentProvider
   label: string
+  /** 原生 = Claude/Cursor/Codex 原版；第三方 = Youmi/ccb/Reasonix/Pi。缺省由 id 推导。 */
+  family?: EngineFamily
   defaultModel: string
   defaultEffort?: string
   supportsPlanMode: boolean
@@ -746,6 +771,33 @@ export const PROVIDERS: ProviderCatalogEntry[] = [
     ],
     efforts: [...DEEPSEEK_REASONING_OPTIONS],
   },
+  {
+    id: "youmi",
+    label: "Youmi",
+    defaultModel: DEFAULT_DEEPSEEK_MODEL,
+    defaultEffort: "max",
+    supportsPlanMode: true,
+    supportsAutoPlanMode: true,
+    models: [
+      {
+        id: "deepseek-v4-flash",
+        label: "DeepSeek Flash",
+        aliases: ["deepseek-chat"],
+        supportsEffort: true,
+        supportedReasoningEfforts: DEEPSEEK_REASONING_OPTIONS,
+        defaultReasoningEffort: "max",
+      },
+      {
+        id: "deepseek-v4-pro",
+        label: "DeepSeek Pro",
+        aliases: ["deepseek-reasoner"],
+        supportsEffort: true,
+        supportedReasoningEfforts: DEEPSEEK_REASONING_OPTIONS,
+        defaultReasoningEffort: "max",
+      },
+    ],
+    efforts: [...DEEPSEEK_REASONING_OPTIONS],
+  },
 ]
 
 export function getProviderCatalog(provider: AgentProvider): ProviderCatalogEntry {
@@ -783,7 +835,7 @@ export function normalizeProviderModelId(
   if (provider === "pi") {
     return normalizePiModelId(modelId, fallbackModelId ?? getProviderCatalog(provider).defaultModel)
   }
-  if (provider === "deepseek") {
+  if (provider === "deepseek" || provider === "youmi") {
     return normalizeDeepSeekModelId(modelId, fallbackModelId ?? getProviderCatalog(provider).defaultModel)
   }
   if (provider === "cursor") {
@@ -1143,7 +1195,7 @@ export interface FsListResult {
 }
 
 /** Default for `newProjectsDirectory` — expanded server-side at use time. */
-export const DEFAULT_NEW_PROJECTS_DIRECTORY = "~/Kanna"
+export const DEFAULT_NEW_PROJECTS_DIRECTORY = DEFAULT_NEW_PROJECT_ROOT
 
 /** One repository from the signed-in user's GitHub account (via the local `gh` CLI). */
 export interface GitHubRepoSummary {
@@ -1184,6 +1236,10 @@ export interface CodexDetectResult {
   installed: boolean
   version?: string
   path?: string
+  /** GitHub openai/codex 最新 release 的 semver。探测失败时省略。 */
+  latestVersion?: string
+  /** 已安装且 latestVersion 高于当前 version。 */
+  updateAvailable?: boolean
 }
 
 export interface CodexInstallResult {
@@ -1346,7 +1402,7 @@ export interface AppSettingsSnapshot {
   filePathDisplay: string
   /**
    * Server-computed, never persisted: this machine is a cloud dev-box
-   * (`kanna --cloud`, or KANNA_DEVBOX_UI=1 in dev). Unlocks dev-box-only UI
+   * (`aiang --cloud`, or AIANG_DEVBOX_UI=1 / KANNA_DEVBOX_UI=1 in dev). Unlocks dev-box-only UI
    * like the full-screen home Terminal page.
    */
   devbox: boolean
@@ -1372,6 +1428,15 @@ export interface AppSettingsSnapshot {
   memoryEnabled: boolean
   /** Labs: 会话记忆最多参考的历史对话数。 */
   memoryMaxChats: number
+  /**
+   * 第三方引擎（Youmi / ccb / Reasonix / Pi）的模型接入：
+   * official = 官方直连；relay = 中转档案。Cursor/Claude/Codex 无视此项。
+   */
+  thirdPartyAccess: ThirdPartyAccessMode
+  /** 当前选用的中转档案。 */
+  activeModelProfileId: string | null
+  /** 用户自配的中转档案（OpenAI / Anthropic 兼容）。 */
+  modelProfiles: ModelProfile[]
 }
 
 export type VisionProviderKind = "qwen" | "glm"
@@ -1405,6 +1470,9 @@ export interface AppSettingsPatch {
   visionService?: Partial<VisionServiceSettings>
   memoryEnabled?: boolean
   memoryMaxChats?: number
+  thirdPartyAccess?: ThirdPartyAccessMode
+  activeModelProfileId?: string | null
+  modelProfiles?: ModelProfile[]
   terminal?: Partial<AppSettingsSnapshot["terminal"]>
   editor?: Partial<AppSettingsSnapshot["editor"]>
   defaultProvider?: DefaultProviderPreference
@@ -1424,6 +1492,9 @@ export interface AppSettingsPatch {
     }
     reasonix?: Partial<Omit<ProviderPreference<ReasonixModelOptions>, "modelOptions">> & {
       modelOptions?: Partial<ReasonixModelOptions>
+    }
+    youmi?: Partial<Omit<ProviderPreference<YoumiModelOptions>, "modelOptions">> & {
+      modelOptions?: Partial<YoumiModelOptions>
     }
   }
 }
@@ -2136,6 +2207,12 @@ export interface InterruptedEntry extends TranscriptEntryBase {
  * (session token cleared); the next turn starts a fresh session on
  * `toProvider` with a handoff context block prepended on the wire.
  */
+export interface CollaborationReviewEntry extends TranscriptEntryBase {
+  kind: "collaboration_review"
+  verdict: "pass" | "fail"
+  summary: string
+}
+
 export interface HandoffBoundaryEntry extends TranscriptEntryBase {
   kind: "handoff_boundary"
   fromProvider: AgentProvider
@@ -2153,7 +2230,7 @@ export interface HandoffBoundaryEntry extends TranscriptEntryBase {
  * Marks a same-provider session recovery. The chat's native session could not
  * be resumed (e.g. the coding-agent CLI garbage-collected its session file);
  * the next turn starts a fresh session on the same `provider` with the
- * conversation rebuilt from Kanna's saved transcript on the wire.
+ * conversation rebuilt from Youmi's saved transcript on the wire.
  */
 export interface SessionRestoredEntry extends TranscriptEntryBase {
   kind: "session_restored"
@@ -2179,6 +2256,7 @@ export type TranscriptEntry =
   | InterruptedEntry
   | HandoffBoundaryEntry
   | SessionRestoredEntry
+  | CollaborationReviewEntry
 
 export interface HydratedToolCallBase<TKind extends string, TInput, TResult> {
   id: string
@@ -2297,6 +2375,7 @@ export type HydratedTranscriptMessage =
   | ({ kind: "compact_summary"; summary: string; id: string; messageId?: string; timestamp: string; hidden?: boolean })
   | ({ kind: "context_cleared"; id: string; messageId?: string; timestamp: string; hidden?: boolean })
   | ({ kind: "handoff_boundary"; fromProvider: AgentProvider; toProvider: AgentProvider; id: string; messageId?: string; timestamp: string; hidden?: boolean })
+  | ({ kind: "collaboration_review"; verdict: "pass" | "fail"; summary: string; id: string; messageId?: string; timestamp: string; hidden?: boolean })
   | ({ kind: "session_restored"; provider: AgentProvider; stats?: HandoffBoundaryEntry["stats"]; id: string; messageId?: string; timestamp: string; hidden?: boolean })
   | ({ kind: "interrupted"; id: string; messageId?: string; timestamp: string; hidden?: boolean })
   | ({ kind: "unknown"; json: string; id: string; messageId?: string; timestamp: string; hidden?: boolean })

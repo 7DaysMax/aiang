@@ -148,10 +148,10 @@ export type ClientCommand =
   }
   /** 设置页「服务状态」：拉取并解析 DeepSeek 官方状态页（status.deepseek.com）。 */
   | { type: "deepseek.status"; force?: boolean }
-  /** 探测本机 Codex 引擎（codex CLI）是否可用。 */
+  /** 探测本机 Codex 引擎（codex CLI）是否可用，并对比 GitHub 最新版。 */
   | { type: "codex.detect" }
-  /** 一键安装 Codex 引擎（下载 codex CLI + 配置 DeepSeek）。 */
-  | { type: "codex.install" }
+  /** 一键安装 Codex 引擎（下载 codex CLI + 配置 DeepSeek）。force 时覆盖已安装版本。 */
+  | { type: "codex.install"; force?: boolean }
   /** 对话框「优化提示词」：让 DeepSeek 自己优化用户输入的提示词，返回优化结果（不直接发送）。 */
   | { type: "prompt.optimize"; prompt: string }
   | { type: "skills.search"; query: string; limit?: number }
@@ -161,9 +161,12 @@ export type ClientCommand =
   | { type: "skills.uninstall"; skillId: string }
   | { type: "skills.listInstalled" }
   | { type: "skills.listGlobal" }
-  /** 插件(marketplace)管理,对齐 Codex core-plugins。 */
+  /** 插件(marketplace)管理,对齐 Codex core-plugins；社区目录来自 GitHub topic dsh-plugin。 */
   | { type: "plugin.list" }
+  | { type: "plugin.community"; query?: string }
   | { type: "plugin.install"; marketplace: string; marketplaceIsLocal?: boolean; pluginName: string }
+  | { type: "plugin.installGithub"; repo: string; description?: string }
+  | { type: "plugin.installMcp"; name: string; description?: string; command?: string; args?: string[]; url?: string }
   | { type: "plugin.uninstall"; pluginName: string }
   | {
       type: "settings.writeLlmProvider"
@@ -244,6 +247,7 @@ export type ClientCommand =
       effort?: string
       planMode?: boolean
       autoPlan?: boolean
+      collaboration?: boolean
     }
   | { type: "chat.refreshDiffs"; chatId: string }
   | { type: "chat.initGit"; chatId: string }
@@ -278,6 +282,7 @@ export type ClientCommand =
   | { type: "chat.createBranch"; chatId: string; name: string; baseBranchName?: string }
   | { type: "chat.discardDiffFile"; chatId: string; path: string }
   | { type: "chat.ignoreDiffFile"; chatId: string; path: string }
+  | { type: "chat.acceptSnapshotBaseline"; chatId: string }
   | { type: "chat.cancel"; chatId: string }
   | { type: "chat.stopDraining"; chatId: string }
   | {
@@ -297,6 +302,7 @@ export type ClientCommand =
       modelOptions?: ModelOptions
       planMode?: boolean
       autoPlan?: boolean
+      collaboration?: boolean
     }
   | {
       type: "message.steer"

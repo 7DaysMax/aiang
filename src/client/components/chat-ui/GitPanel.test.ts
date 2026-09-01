@@ -107,10 +107,10 @@ describe("GitPanel", () => {
       })
     ))
 
-    expect(markup).toContain("History")
+    expect(markup).toContain("历史")
     expect(markup).toContain("Initial commit")
     expect(markup).toContain("main")
-    expect(markup).not.toContain("No file changes.")
+    expect(markup).not.toContain("暂无文件改动。")
   })
 
   test("defaults to changes when there are file changes", () => {
@@ -162,12 +162,12 @@ describe("GitPanel", () => {
     ))
 
     expect(markup).toContain("src/app.ts")
-    expect(markup).toContain("Open branch switcher")
-    expect(markup).toContain("Pull")
+    expect(markup).toContain("打开分支切换器")
+    expect(markup).toContain("合并到本地")
     expect(markup).toContain("3")
-    expect(markup).toContain("Generate &amp; push to")
-    expect(markup).toContain("Generate commit message")
-    expect(markup).not.toContain("Publish Branch")
+    expect(markup).toContain("生成并推送到")
+    expect(markup).toContain("生成提交信息")
+    expect(markup).not.toContain("发布分支")
   })
 
   test("labels the primary commit action for empty and filled messages", () => {
@@ -178,7 +178,7 @@ describe("GitPanel", () => {
       isGeneratedCommitInFlight: false,
       commitModeInFlight: null,
       primaryCommitMode: "commit_and_push",
-    })).toBe("Generate & push to")
+    })).toBe("生成并推送到")
 
     expect(getPrimaryCommitActionPrefix({
       hasSummary: true,
@@ -187,7 +187,7 @@ describe("GitPanel", () => {
       isGeneratedCommitInFlight: false,
       commitModeInFlight: null,
       primaryCommitMode: "commit_and_push",
-    })).toBe("Commit & push to")
+    })).toBe("提交并推送到")
 
     expect(getPrimaryCommitActionPrefix({
       hasSummary: true,
@@ -196,7 +196,7 @@ describe("GitPanel", () => {
       isGeneratedCommitInFlight: true,
       commitModeInFlight: "commit_and_push",
       primaryCommitMode: "commit_and_push",
-    })).toBe("Pushing...")
+    })).toBe("正在推送…")
   })
 
   test("renders the branch switcher affordance", () => {
@@ -230,7 +230,7 @@ describe("GitPanel", () => {
       })
     ))
 
-    expect(markup).toContain("Open branch switcher")
+    expect(markup).toContain("打开分支切换器")
   })
 
   test("shows push to github for an unpublished local branch without a remote", () => {

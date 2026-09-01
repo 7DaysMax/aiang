@@ -26,6 +26,8 @@ function user(id: string, content: string): ResolvedTranscriptRow {
     isFinalStatus: false,
     hasThinkingPrefix: false,
     isLatestThinking: false,
+    isLatestAssistantText: false,
+    isStreaming: false,
   }
 }
 
@@ -58,6 +60,8 @@ function tool(
     isFinalStatus: false,
     hasThinkingPrefix: false,
     isLatestThinking: false,
+    isLatestAssistantText: false,
+    isStreaming: false,
   }
 }
 

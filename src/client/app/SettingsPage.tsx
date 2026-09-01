@@ -20,6 +20,7 @@ import { ProvidersSection } from "./settings/ProvidersSection"
 import { StatusSection } from "./settings/StatusSection"
 import { SETTINGS_SECTIONS } from "./settings/registry"
 import { SkillsSection } from "./settings/SkillsSection"
+import { PluginsSection } from "./settings/PluginsSection"
 import { UsageSection } from "./settings/UsageSection"
 import { getKeybindingsSubtitle } from "./settings/shared"
 import type { KannaState } from "./useKannaState"
@@ -36,6 +37,7 @@ export {
   setCachedChangelog,
 } from "./settings/ChangelogSection"
 export { SkillsSection } from "./settings/SkillsSection"
+export { PluginsSection } from "./settings/PluginsSection"
 export { getKeybindingsSubtitle, shouldPreviewChatSoundChange } from "./settings/shared"
 
 const sidebarItems = SETTINGS_SECTIONS
@@ -306,6 +308,8 @@ export function SettingsPage() {
                   <KeybindingsSection state={state} />
                 ) : selectedPage === "skills" ? (
                   <SkillsSection state={state} />
+                ) : selectedPage === "plugins" ? (
+                  <PluginsSection state={state} />
                 ) : selectedPage === "usage" ? (
                   <UsageSection state={state} />
                 ) : selectedPage === "status" ? (

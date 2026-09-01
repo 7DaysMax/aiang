@@ -13,6 +13,7 @@ import {
   setCachedChangelog,
   shouldPreviewChatSoundChange,
   SkillsSection,
+  PluginsSection,
 } from "./SettingsPage"
 import { SettingsHeaderButton } from "../components/ui/settings-header-button"
 import type { UpdateSnapshot } from "../../shared/types"
@@ -136,6 +137,7 @@ describe("resolveSettingsSectionId", () => {
     expect(resolveSettingsSectionId("changelog")).toBe("changelog")
     expect(resolveSettingsSectionId("keybindings")).toBe("keybindings")
     expect(resolveSettingsSectionId("skills")).toBe("skills")
+    expect(resolveSettingsSectionId("plugins")).toBe("plugins")
   })
 
   test("rejects unknown settings sections", () => {
@@ -163,6 +165,35 @@ describe("SkillsSection", () => {
     expect(html).toContain("Installed")
     expect(html).toContain("Add skills from skills.sh")
     expect(html).toContain("searchbox")
+  })
+})
+
+describe("PluginsSection", () => {
+  test("renders shipped Youmi plugins and marketplace install", () => {
+    const html = renderToStaticMarkup(
+      <PluginsSection
+        state={{
+          connectionStatus: "connected",
+          socket: {
+            command: async () => ({
+              shipped: [{
+                name: "youmi-coding-tools",
+                description: "Youmi 内置编码工具插件：Glob 列文件、Grep 搜内容。",
+                tools: ["glob", "grep"],
+                builtin: true,
+              }],
+              installed: [],
+              errors: [],
+            }),
+          } as never,
+        }}
+      />
+    )
+
+    expect(html).toContain("内置插件")
+    expect(html).toContain("社区插件")
+    expect(html).toContain("强力 MCP")
+    expect(html).toContain("引擎仍是 Youmi")
   })
 })
 

@@ -1,16 +1,18 @@
-export const APP_NAME = "Aiang"
+export const APP_NAME = "Youmi Aiagent"
 export const CLOUD_SERVICE_NAME = "Youmi Cloud"
 export const CLI_COMMAND = "aiang"
 export const DATA_ROOT_NAME = ".aiang"
 export const DEV_DATA_ROOT_NAME = ".aiang-dev"
 export const PACKAGE_NAME = "aiang"
 export const RUNTIME_PROFILE_ENV_VAR = "AIANG_RUNTIME_PROFILE"
+/** Legacy Kanna env name — still honoured as a fallback. */
+export const LEGACY_RUNTIME_PROFILE_ENV_VAR = "KANNA_RUNTIME_PROFILE"
 // Read version from package.json — JSON import works in both Bun and Vite
 import pkg from "../../package.json"
 export const APP_VERSION = pkg.version
 export const SDK_CLIENT_APP = `aiang/${pkg.version}`
 export const LOG_PREFIX = "[aiang]"
-export const DEFAULT_NEW_PROJECT_ROOT = `~/${APP_NAME}`
+export const DEFAULT_NEW_PROJECT_ROOT = "~/YoumiAiagent"
 
 export type RuntimeProfile = "dev" | "prod"
 
@@ -25,8 +27,23 @@ function getRuntimeEnv(): RuntimeEnv {
   return candidate.process?.env
 }
 
+/** First non-empty string among `names`. AIANG_* should be listed before KANNA_*. */
+export function readEnv(env: RuntimeEnv, ...names: string[]): string | undefined {
+  if (!env) return undefined
+  for (const name of names) {
+    const value = env[name]
+    if (typeof value === "string" && value.length > 0) return value
+  }
+  return undefined
+}
+
+export function envFlagEnabled(...names: string[]): boolean {
+  return readEnv(getRuntimeEnv(), ...names) === "1"
+}
+
 export function getRuntimeProfile(env: RuntimeEnv = getRuntimeEnv()): RuntimeProfile {
-  return env?.[RUNTIME_PROFILE_ENV_VAR]?.trim().toLowerCase() === "dev" ? "dev" : "prod"
+  const value = readEnv(env, RUNTIME_PROFILE_ENV_VAR, LEGACY_RUNTIME_PROFILE_ENV_VAR)
+  return value?.trim().toLowerCase() === "dev" ? "dev" : "prod"
 }
 
 export function getDataRootName(env: RuntimeEnv = getRuntimeEnv()) {
@@ -75,6 +92,14 @@ export function getCloudFilePath(homeDir: string, env: RuntimeEnv = getRuntimeEn
 
 export function getCloudFilePathDisplay(env: RuntimeEnv = getRuntimeEnv()) {
   return `${getDataRootDirDisplay(env)}/cloud.json`
+}
+
+export function getMemoriesDir(homeDir: string, env: RuntimeEnv = getRuntimeEnv()) {
+  return `${getDataRootDir(homeDir, env)}/memories`
+}
+
+export function getMemoriesDirDisplay(env: RuntimeEnv = getRuntimeEnv()) {
+  return `${getDataRootDirDisplay(env)}/memories`
 }
 
 export function getCliInvocation(arg?: string) {

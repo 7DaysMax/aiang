@@ -136,5 +136,7 @@ describe("ChatInput", () => {
     expect(html).toContain("absolute inset-0 h-full w-full cursor-pointer opacity-0")
     expect(html.indexOf('aria-label="添加附件"')).toBeGreaterThan(html.indexOf('placeholder="Build something..."'))
     expect(html).not.toContain('type="file" multiple="" class="hidden"')
+    expect(html).toContain("协作验收")
+    expect(html).toContain("先动手，再自动验收")
   })
 })

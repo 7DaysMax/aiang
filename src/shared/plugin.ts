@@ -4,9 +4,10 @@
  */
 
 export interface PluginManifestMcpServer {
-  command: string
-  args: string[]
+  command?: string
+  args?: string[]
   env?: Record<string, string>
+  url?: string
 }
 
 export interface PluginManifestHooks {
@@ -14,6 +15,16 @@ export interface PluginManifestHooks {
   preTurn?: string
   /** 工具调用后执行的命令。 */
   postToolUse?: string
+}
+
+/** 插件向 Youmi 引擎注册的一条模型工具。 */
+export interface PluginManifestTool {
+  name: string
+  description: string
+  parameters?: Record<string, unknown>
+  permission?: "r" | "rw"
+  /** 相对插件根的执行模块(.js/.ts),export default 或 export function execute。 */
+  entry?: string
 }
 
 export interface PluginManifestInterface {
@@ -40,6 +51,8 @@ export interface PluginManifest {
   skills: string[]
   /** 斜杠命令 markdown 目录。 */
   commands: string[]
+  /** Youmi/Penguin 可挂载的模型工具(写入引擎 builtin,轨迹里显示 Glob/Grep/Bash)。 */
+  tools: PluginManifestTool[]
   mcpServers: Record<string, PluginManifestMcpServer>
   hooks?: PluginManifestHooks
   interface?: PluginManifestInterface
@@ -77,9 +90,62 @@ export interface InstalledPlugin {
   installedAt: string
   skills: string[]
   commands: string[]
+  tools: string[]
+  mcpServers: string[]
+}
+
+export interface ShippedPlugin {
+  name: string
+  version?: string
+  description: string
+  tools: string[]
+  builtin: true
 }
 
 export interface PluginListSnapshot {
+  shipped: ShippedPlugin[]
   installed: InstalledPlugin[]
   errors: string[]
+}
+
+export type PluginCommunityCategoryId =
+  | "all"
+  | "coding"
+  | "tools"
+  | "search"
+  | "ui"
+  | "browser"
+  | "models"
+  | "mcp"
+
+export type PluginEcosystem = "dsh" | "mcp" | "github"
+
+export type CommunityPluginInstall =
+  | { kind: "github"; repo: string }
+  | { kind: "mcp-stdio"; command: string; args: string[] }
+  | { kind: "mcp-http"; url: string }
+
+/** 社区目录里的一条插件：DSH / 官方 MCP / GitHub mcp-server。 */
+export interface CommunityPlugin {
+  name: string
+  fullName: string
+  description: string
+  url: string
+  cloneUrl: string
+  stars: number
+  category: PluginCommunityCategoryId
+  ecosystem: PluginEcosystem
+  featured?: boolean
+  install: CommunityPluginInstall
+  topics: string[]
+  updatedAt: string
+}
+
+export interface PluginCommunitySnapshot {
+  query: string
+  total: number
+  plugins: CommunityPlugin[]
+  source: "mixed" | "fallback"
+  fetchedAt: string
+  error?: string
 }

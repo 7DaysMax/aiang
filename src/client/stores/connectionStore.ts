@@ -16,6 +16,19 @@ import {
 
 export type ConnectionMode = "unknown" | "local" | "cloud"
 
+export function isLoopbackHostname(host: string): boolean {
+  const value = host.trim().toLowerCase()
+  return (
+    value === "localhost"
+    || value === "127.0.0.1"
+    || value === "[::1]"
+    || value === "::1"
+    || value.startsWith("localhost:")
+    || value.startsWith("127.0.0.1:")
+    || value.startsWith("[::1]:")
+  )
+}
+
 interface ConnectionState {
   mode: ConnectionMode
   machines: CloudMachineSummary[]
@@ -41,9 +54,17 @@ export const useConnectionStore = create<ConnectionState>()((set) => ({
   mode: "unknown",
   machines: [],
 
-  load: async (fetchImpl = fetch) => {
+  load: async (fetchImpl?: typeof fetch) => {
+    const hostname = typeof window !== "undefined" ? window.location.hostname : ""
+    // Local Vite/dev has no cloud proxy. Skip the probe so the console
+    // doesn't fill with `/__cloud/machines` 404s. Tests pass fetchImpl.
+    if (!fetchImpl && isLoopbackHostname(hostname)) {
+      set({ mode: "local", machines: [] })
+      return
+    }
+    const impl = fetchImpl ?? fetch
     try {
-      const response = await fetchImpl(`${CLOUD_BROWSER_PATH_PREFIX}/machines`, {
+      const response = await impl(`${CLOUD_BROWSER_PATH_PREFIX}/machines`, {
         headers: { Accept: "application/json" },
       })
       if (response.ok && (response.headers.get("content-type") ?? "").includes("application/json")) {

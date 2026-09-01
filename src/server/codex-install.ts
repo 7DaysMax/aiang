@@ -18,10 +18,45 @@ import {
 import { homedir } from "node:os"
 import path from "node:path"
 import type { CodexDetectResult, CodexInstallResult } from "../shared/types"
+import { compareVersions } from "./cli-runtime"
 import { resolveCodexBinary } from "./codex-app-server"
 import { resolveDeepSeekApiKey } from "./deepseek-agent"
+import { buildCodexConfigFromProfile, resolveModelRuntime } from "./model-profiles"
+import { parseCodexVersion } from "./provider-auth"
 
 const CODEX_DOWNLOAD_BASE = "https://github.com/openai/codex/releases/latest/download"
+const CODEX_LATEST_RELEASE_URL = "https://api.github.com/repos/openai/codex/releases/latest"
+const CODEX_LATEST_TTL_MS = 60 * 60_000
+
+let cachedCodexLatest: { version: string; at: number } | null = null
+
+export function resetCodexLatestVersionCache() {
+  cachedCodexLatest = null
+}
+
+/** GitHub openai/codex 最新 tag 里的 semver（`rust-v0.47.0` / `v0.47.0` / `0.47.0`）。 */
+export function parseCodexReleaseTag(tag: string): string | null {
+  return /(\d+\.\d+\.\d+)/.exec(tag.trim())?.[1] ?? null
+}
+
+export async function fetchCodexLatestVersion(fetchFn: typeof fetch = fetch): Promise<string | null> {
+  if (cachedCodexLatest && Date.now() - cachedCodexLatest.at < CODEX_LATEST_TTL_MS) {
+    return cachedCodexLatest.version
+  }
+  try {
+    const response = await fetchFn(CODEX_LATEST_RELEASE_URL, {
+      headers: { Accept: "application/vnd.github+json" },
+    })
+    if (!response.ok) return cachedCodexLatest?.version ?? null
+    const payload = (await response.json()) as { tag_name?: unknown }
+    const version = typeof payload.tag_name === "string" ? parseCodexReleaseTag(payload.tag_name) : null
+    if (!version) return cachedCodexLatest?.version ?? null
+    cachedCodexLatest = { version, at: Date.now() }
+    return version
+  } catch {
+    return cachedCodexLatest?.version ?? null
+  }
+}
 
 /**
  * 从解压目录里选出真正的 codex CLI 主程序。
@@ -98,26 +133,44 @@ function extractZip(zipPath: string, destDir: string): { status: number | null; 
   return { status: result.status, error: result.stderr?.trim() }
 }
 
+function withCodexLatest(
+  result: CodexDetectResult,
+  latestVersion: string | null,
+): CodexDetectResult {
+  if (!latestVersion) return result
+  const current = result.version ? parseCodexVersion(result.version) ?? result.version : null
+  return {
+    ...result,
+    latestVersion,
+    updateAvailable: Boolean(
+      result.installed && current && compareVersions(current, latestVersion) < 0,
+    ),
+  }
+}
+
 /** 探测本机 codex CLI：resolveCodexBinary 找到候选后跑 `codex --version` 验证。 */
 export async function detectCodex(home: string = homedir()): Promise<CodexDetectResult> {
+  const latestVersion = await fetchCodexLatestVersion()
   const binary = resolveCodexBinary(home)
   if (binary === "codex") {
     // PATH 解析由 spawn 决定：先验证进程里能否直接 spawn。
     const probe = spawnSync("codex", ["--version"], { encoding: "utf8", timeout: 10_000 })
     if (probe.status !== 0 || !probe.stdout) {
-      return { installed: false }
+      return withCodexLatest({ installed: false }, latestVersion)
     }
-    return { installed: true, version: probe.stdout.trim(), path: "codex" }
+    const version = parseCodexVersion(probe.stdout) ?? probe.stdout.trim()
+    return withCodexLatest({ installed: true, version, path: "codex" }, latestVersion)
   }
 
   try {
     const probe = spawnSync(binary, ["--version"], { encoding: "utf8", timeout: 10_000 })
     if (probe.status !== 0 || !probe.stdout) {
-      return { installed: false, path: binary }
+      return withCodexLatest({ installed: false, path: binary }, latestVersion)
     }
-    return { installed: true, version: probe.stdout.trim(), path: binary }
+    const version = parseCodexVersion(probe.stdout) ?? probe.stdout.trim()
+    return withCodexLatest({ installed: true, version, path: binary }, latestVersion)
   } catch {
-    return { installed: false, path: binary }
+    return withCodexLatest({ installed: false, path: binary }, latestVersion)
   }
 }
 
@@ -171,18 +224,6 @@ export function describeCodexProbeFailure(
   return `codex --version 无响应${stderr ? `：${stderr}` : "，无输出"}。请手动运行 ${target} --version 查看详情。${logHint}`
 }
 
-const CODEX_CONFIG_TEMPLATE = `# 由 Aiang 自动生成：Codex agent 引擎 → DeepSeek V4 官方 API。
-model = "deepseek-v4-flash"
-model_provider = "custom"
-sandbox_mode = "danger-full-access"
-
-[model_providers.custom]
-name = "custom"
-wire_api = "responses"
-requires_openai_auth = true
-base_url = "https://api.deepseek.com/v1"
-`
-
 /**
  * 一键安装 Codex 引擎：
  * 1. 下载官方 codex CLI（GitHub releases）到 ~/.aiang/bin/codex
@@ -218,13 +259,8 @@ export async function installCodex(options: {
     }
   }
 
-  const apiKey = resolveDeepSeekApiKey()
-  if (!apiKey) {
-    return {
-      ok: false,
-      message: "请先在「设置 → 模型服务」中填写 DeepSeek API Key，再安装 Codex 引擎。",
-    }
-  }
+  const runtime = resolveModelRuntime()
+  const apiKey = runtime.apiKey || resolveDeepSeekApiKey()
 
   const binDir = path.join(home, ".aiang", "bin")
   const target = aiangCodexBinary(home)
@@ -277,25 +313,37 @@ export async function installCodex(options: {
     if (!isWindows) chmodSync(target, 0o755)
     step(`已安装到 ${target}（${(statSync(target).size / 1024 / 1024).toFixed(1)} MB）`)
 
-    step("写入 Codex 配置（DeepSeek V4 官方 API）…")
     const codexHome = path.join(home, ".codex")
     mkdirSync(codexHome, { recursive: true })
+    if (apiKey) {
+      step("写入 Codex 配置（当前模型档案）…")
+      const configPath = path.join(codexHome, "config.toml")
+      if (existsSync(configPath)) {
+        const backup = `${configPath}.bak-${Date.now()}`
+        renameSync(configPath, backup)
+        step(`已有配置已备份：${backup}`)
+      }
+      const profile = runtime.profile ?? {
+        id: "legacy-deepseek",
+        name: "DeepSeek",
+        presetId: "deepseek" as const,
+        protocol: "openai-compat" as const,
+        baseUrl: runtime.baseUrl || "https://api.deepseek.com",
+        apiKey,
+        modelId: runtime.modelId || "deepseek-v4-flash",
+      }
+      writeFileSync(configPath, buildCodexConfigFromProfile(profile), "utf8")
 
-    const configPath = path.join(codexHome, "config.toml")
-    if (existsSync(configPath)) {
-      const backup = `${configPath}.bak-${Date.now()}`
-      renameSync(configPath, backup)
-      step(`已有配置已备份：${backup}`)
+      const authPath = path.join(codexHome, "auth.json")
+      if (existsSync(authPath)) {
+        const backup = `${authPath}.bak-${Date.now()}`
+        renameSync(authPath, backup)
+        step(`已有登录态已备份：${backup}`)
+      }
+      writeFileSync(authPath, JSON.stringify({ OPENAI_API_KEY: apiKey }, null, 2), "utf8")
+    } else {
+      step("未配置模型档案，跳过写入 ~/.codex。安装完成后可在设置里添加档案。")
     }
-    writeFileSync(configPath, CODEX_CONFIG_TEMPLATE, "utf8")
-
-    const authPath = path.join(codexHome, "auth.json")
-    if (existsSync(authPath)) {
-      const backup = `${authPath}.bak-${Date.now()}`
-      renameSync(authPath, backup)
-      step(`已有登录态已备份：${backup}`)
-    }
-    writeFileSync(authPath, JSON.stringify({ OPENAI_API_KEY: apiKey }, null, 2), "utf8")
 
     step("验证安装…")
     const probe = spawnSync(target, ["--version"], { encoding: "utf8", timeout: 15_000 })

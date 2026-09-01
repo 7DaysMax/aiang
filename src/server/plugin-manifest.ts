@@ -1,14 +1,18 @@
+import { existsSync } from "node:fs"
+import { join } from "node:path"
 import type {
   PluginManifest,
   PluginManifestInterface,
   PluginManifestMcpServer,
+  PluginManifestTool,
   PluginMarketplaceEntry,
   PluginMarketplaceEntrySource,
   PluginMarketplaceManifest,
 } from "../shared/plugin"
 
-/** 对齐 Codex:manifest 在插件根下的这些位置之一。 */
+/** 对齐 Codex / Claude / Cursor,并加上 Youmi 自己的插件清单。 */
 export const PLUGIN_MANIFEST_RELATIVE_PATHS = [
+  ".youmi-plugin/plugin.json",
   ".codex-plugin/plugin.json",
   ".claude-plugin/plugin.json",
   ".cursor-plugin/plugin.json",
@@ -21,12 +25,35 @@ export const MARKETPLACE_MANIFEST_RELATIVE_PATHS = [
   ".cursor-plugin/marketplace.json",
 ] as const
 
+export function findPluginManifestFile(pluginRoot: string): string | null {
+  for (const relative of PLUGIN_MANIFEST_RELATIVE_PATHS) {
+    const candidate = join(pluginRoot, relative)
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
+
+export function findMarketplaceManifestFile(repoRoot: string): string | null {
+  for (const relative of MARKETPLACE_MANIFEST_RELATIVE_PATHS) {
+    const candidate = join(repoRoot, relative)
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
+
 export function assertSafePluginName(name: string) {
   const normalized = name.trim()
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(normalized)) {
     throw new Error("Plugin name is invalid.")
   }
   return normalized
+}
+
+/** npm scope、GitHub 仓库名 → plugin.json name。 */
+export function sanitizePluginName(raw: string) {
+  const stripped = raw.trim().replace(/^@[^/]+\//, "")
+  const cleaned = stripped.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "")
+  return assertSafePluginName(cleaned || "plugin")
 }
 
 function asString(value: unknown) {
@@ -53,6 +80,31 @@ export function assertSafePluginRelativePath(raw: string, field: string) {
   return value.replace(/^\.\//, "")
 }
 
+function parseTools(value: unknown): PluginManifestTool[] {
+  if (!Array.isArray(value)) return []
+  const tools: PluginManifestTool[] = []
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue
+    const entry = raw as Record<string, unknown>
+    const name = asString(entry.name).trim()
+    const description = asString(entry.description).trim()
+    if (!name || !description) continue
+    const permission = asString(entry.permission)
+    tools.push({
+      name: assertSafePluginName(name),
+      description,
+      ...(entry.parameters && typeof entry.parameters === "object" && !Array.isArray(entry.parameters)
+        ? { parameters: entry.parameters as Record<string, unknown> }
+        : {}),
+      ...(permission === "r" || permission === "rw" ? { permission } : {}),
+      ...(asString(entry.entry)
+        ? { entry: assertSafePluginRelativePath(asString(entry.entry), "tools.entry") }
+        : {}),
+    })
+  }
+  return tools
+}
+
 function parseMcpServers(value: unknown): Record<string, PluginManifestMcpServer> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {}
   const servers: Record<string, PluginManifestMcpServer> = {}
@@ -60,7 +112,8 @@ function parseMcpServers(value: unknown): Record<string, PluginManifestMcpServer
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue
     const entry = raw as Record<string, unknown>
     const command = asString(entry.command)
-    if (!command) continue
+    const url = asString(entry.url)
+    if (!command && !url) continue
     const env = entry.env && typeof entry.env === "object" && !Array.isArray(entry.env)
       ? Object.fromEntries(
           Object.entries(entry.env as Record<string, unknown>)
@@ -69,8 +122,8 @@ function parseMcpServers(value: unknown): Record<string, PluginManifestMcpServer
         )
       : undefined
     servers[name] = {
-      command,
-      args: asStringArray(entry.args),
+      ...(command ? { command, args: asStringArray(entry.args) } : { args: [] }),
+      ...(url ? { url } : {}),
       ...(env ? { env } : {}),
     }
   }
@@ -117,6 +170,7 @@ export function parsePluginManifest(json: string): PluginManifest {
     keywords: asStringArray(entry.keywords),
     skills,
     commands,
+    tools: parseTools(entry.tools),
     mcpServers: parseMcpServers(entry.mcpServers),
     ...(entry.hooks && typeof entry.hooks === "object" && !Array.isArray(entry.hooks)
       ? {

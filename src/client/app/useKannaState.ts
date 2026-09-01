@@ -204,7 +204,7 @@ export interface KannaState {
   handleWriteFaveModels: (faveModels: FaveModel[]) => Promise<void>
   handleValidateLlmProvider: (value: Pick<LlmProviderSnapshot, "provider" | "apiKey" | "model" | "baseUrl">) => Promise<LlmProviderValidationResult>
   handleSignOut: () => Promise<void>
-  handleSend: (content: string, options?: { provider?: AgentProvider; model?: string; modelOptions?: ModelOptions; planMode?: boolean; autoPlan?: boolean }) => Promise<void>
+  handleSend: (content: string, options?: { provider?: AgentProvider; model?: string; modelOptions?: ModelOptions; planMode?: boolean; autoPlan?: boolean; collaboration?: boolean }) => Promise<void>
   handleSteerQueuedMessage: (queuedMessageId: string) => Promise<void>
   handleRemoveQueuedMessage: (queuedMessageId: string) => Promise<void>
   handleCancel: () => Promise<void>
@@ -542,10 +542,17 @@ export function useKannaState(activeChatId: string | null): KannaState {
     ? "starting"
     : null
   const effectiveRuntimeStatus = optimisticRuntimeStatus ?? runtime?.status ?? null
-  // 聊天快照未到达前的回退目录与服务器下发保持一致：DeepSeek（默认）、
-  // Claude（官方引擎）、Codex。
+  // 聊天快照未到达前的回退目录与服务器下发保持一致：Youmi、DeepSeek、
+  // Reasonix、Claude、Cursor、Codex。
   const fallbackProviders = useMemo(
-    () => PROVIDERS.filter((provider) => provider.id === "deepseek" || provider.id === "claude" || provider.id === "codex"),
+    () => PROVIDERS.filter((provider) =>
+      provider.id === "youmi"
+      || provider.id === "deepseek"
+      || provider.id === "reasonix"
+      || provider.id === "claude"
+      || provider.id === "cursor"
+      || provider.id === "codex"
+    ),
     []
   )
   const availableProviders = activeChatSnapshot?.availableProviders ?? fallbackProviders
@@ -621,7 +628,10 @@ export function useKannaState(activeChatId: string | null): KannaState {
       ? chatPreferences.getComposerState(activeChatId)
       : chatPreferences.getComposerState(NEW_CHAT_COMPOSER_ID)
     const result = await socket.command<{ chatId: string }>({ type: "chat.create", projectId })
-    chatPreferences.initializeComposerForChat(result.chatId, { sourceState: sourceComposerState })
+    chatPreferences.initializeComposerForChat(result.chatId, {
+      sourceState: sourceComposerState,
+      sourceChatId: activeChatId ?? NEW_CHAT_COMPOSER_ID,
+    })
     setSelectedProjectId(projectId)
     setPendingChatId(result.chatId)
     navigate(`/chat/${result.chatId}`)
@@ -691,6 +701,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
       const chatPreferences = useChatPreferencesStore.getState()
       chatPreferences.initializeComposerForChat(result.chatId, {
         sourceState: chatPreferences.getComposerState(chat.chatId),
+        sourceChatId: chat.chatId,
       })
       setPendingChatId(result.chatId)
       navigate(`/chat/${result.chatId}`)

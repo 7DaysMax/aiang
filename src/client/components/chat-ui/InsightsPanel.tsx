@@ -36,7 +36,9 @@ import { Button } from "../ui/button"
 import { ScrollArea } from "../ui/scroll-area"
 
 const PROVIDER_LABELS: Record<string, string> = {
+  youmi: "Youmi",
   deepseek: "DeepSeek",
+  reasonix: "Reasonix",
   claude: "Claude",
   codex: "Codex",
   cursor: "Cursor",

@@ -23,11 +23,15 @@ describe("hasKannaTrailer", () => {
   })
 
   test("is case-insensitive on the trailer token", () => {
-    expect(hasKannaTrailer("fix: thing\n\nco-authored-by: Kanna <noreply@kanna.sh>")).toBe(true)
+    expect(hasKannaTrailer("fix: thing\n\nco-authored-by: Youmi <noreply@youmi.ai>")).toBe(true)
+  })
+
+  test("still treats a legacy Kanna trailer as already attributed", () => {
+    expect(hasKannaTrailer("fix: thing\n\nCo-Authored-By: Kanna <noreply@kanna.sh>")).toBe(true)
   })
 
   test("ignores a mention inside prose", () => {
-    expect(hasKannaTrailer("document the Co-Authored-By: Kanna <noreply@kanna.sh> trailer")).toBe(false)
+    expect(hasKannaTrailer("document the Co-Authored-By: Youmi <noreply@youmi.ai> trailer")).toBe(false)
   })
 
   test("does not match another tool's trailer", () => {
@@ -41,11 +45,15 @@ describe("hasKannaFooter", () => {
   })
 
   test("detects it without the emoji", () => {
-    expect(hasKannaFooter("fix: thing\n\nShipped with Kanna — https://kanna.sh")).toBe(true)
+    expect(hasKannaFooter("fix: thing\n\nShipped with Youmi Aiagent")).toBe(true)
+  })
+
+  test("still treats a legacy Kanna footer as already attributed", () => {
+    expect(hasKannaFooter("fix: thing\n\n🌸 Shipped with Kanna — https://kanna.sh")).toBe(true)
   })
 
   test("ignores a mention inside prose", () => {
-    expect(hasKannaFooter("this release was shipped with Kanna and other tools")).toBe(false)
+    expect(hasKannaFooter("this release was shipped with Youmi Aiagent and other tools")).toBe(false)
   })
 })
 
@@ -102,16 +110,16 @@ describe("buildKannaAttributionInstructions", () => {
     expect(instructions).toContain(buildKannaPrFooter(AGENT_ID))
   })
 
-  test("keeps the commit link bare and the PR link markdown", () => {
+  test("keeps the commit footer free of markdown links", () => {
     expect(KANNA_COMMIT_FOOTER).not.toContain("](")
-    expect(buildKannaPrFooter(AGENT_ID)).toContain("](https://kanna.sh)")
+    expect(KANNA_COMMIT_FOOTER).toContain("Youmi")
   })
 
   test("keeps the pitch out of the commit footer", () => {
     // Commit messages are permanent and squash-merges repeat them per commit,
     // so the tagline belongs to the PR body alone.
-    expect(KANNA_COMMIT_FOOTER).not.toContain("open-source workspace")
-    expect(buildKannaPrFooter(AGENT_ID)).toContain("open-source workspace")
+    expect(KANNA_COMMIT_FOOTER).not.toContain("workspace for coding agents")
+    expect(buildKannaPrFooter(AGENT_ID)).toContain("workspace for coding agents")
   })
 
   test("puts the two trailers last, as one adjacent block", () => {

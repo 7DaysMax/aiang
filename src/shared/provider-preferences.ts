@@ -4,6 +4,7 @@ import {
   DEFAULT_CURSOR_MODEL_OPTIONS,
   isClaudeReasoningEffort,
   isCodexReasoningEffort,
+  isDeepSeekReasoningEffort,
   isPiReasoningEffort,
   normalizeClaudeContextWindow,
   normalizeClaudeFastMode,
@@ -13,6 +14,7 @@ import {
   normalizeCursorModelId,
   normalizeDeepSeekModelId,
   normalizeDeepSeekReasoningEffort,
+  normalizeYoumiReasoningEffort,
   normalizePiModelId,
   normalizePiReasoningEffort,
   supportsClaudeMaxReasoningEffort,
@@ -25,6 +27,7 @@ import {
   type DeepSeekModelOptions,
   type PiModelOptions,
   type ReasonixModelOptions,
+  type YoumiModelOptions,
   type ProviderPreference,
 } from "./types"
 
@@ -62,13 +65,36 @@ function modelIdFromInput(value?: ProviderPreferenceInput): string | undefined {
 }
 
 export function normalizeClaudePreference(value?: ProviderPreferenceInput): ProviderPreference<ClaudeModelOptions> {
+  const model = normalizeClaudeModelId(modelIdFromInput(value))
   const reasoningEffort = value?.modelOptions?.reasoningEffort
+  const legacyEffort = value?.effort
+
+  // Claude 入口里的 DeepSeek V4：思考档位是官方 low/high/max，不能按
+  // Claude「仅 Opus 支持 max」规则把 max 夹成 high。
+  if (model.startsWith("deepseek-")) {
+    return {
+      model,
+      modelOptions: {
+        reasoningEffort: normalizeDeepSeekReasoningEffort(
+          isDeepSeekReasoningEffort(reasoningEffort)
+            ? reasoningEffort
+            : isDeepSeekReasoningEffort(legacyEffort)
+              ? legacyEffort
+              : reasoningEffort ?? legacyEffort,
+        ),
+        contextWindow: "200k",
+        fastMode: false,
+      },
+      planMode: value?.planMode === true,
+      autoPlan: value?.autoPlan === true,
+    }
+  }
+
   const normalizedEffort = isClaudeReasoningEffort(reasoningEffort)
     ? reasoningEffort
-    : isClaudeReasoningEffort(value?.effort)
-      ? value.effort
+    : isClaudeReasoningEffort(legacyEffort)
+      ? legacyEffort
       : DEFAULT_CLAUDE_MODEL_OPTIONS.reasoningEffort
-  const model = normalizeClaudeModelId(modelIdFromInput(value))
 
   return {
     model,
@@ -132,26 +158,47 @@ export function normalizePiPreference(value?: ProviderPreferenceInput): Provider
 }
 
 export function normalizeDeepSeekPreference(value?: ProviderPreferenceInput): ProviderPreference<DeepSeekModelOptions> {
+  const reasoningEffort = value?.modelOptions?.reasoningEffort
   return {
     model: normalizeDeepSeekModelId(modelIdFromInput(value)),
     modelOptions: {
-      reasoningEffort: normalizeDeepSeekReasoningEffort(value?.modelOptions?.reasoningEffort),
+      reasoningEffort: normalizeDeepSeekReasoningEffort(
+        isDeepSeekReasoningEffort(reasoningEffort) ? reasoningEffort : value?.effort,
+      ),
       fastMode: false,
     },
-    planMode: false,
-    autoPlan: false,
+    planMode: value?.planMode === true,
+    autoPlan: value?.autoPlan === true,
   }
 }
 
 export function normalizeReasonixPreference(value?: ProviderPreferenceInput): ProviderPreference<ReasonixModelOptions> {
+  const reasoningEffort = value?.modelOptions?.reasoningEffort
   return {
     model: normalizeDeepSeekModelId(modelIdFromInput(value)),
     modelOptions: {
-      reasoningEffort: normalizeDeepSeekReasoningEffort(value?.modelOptions?.reasoningEffort),
+      reasoningEffort: normalizeDeepSeekReasoningEffort(
+        isDeepSeekReasoningEffort(reasoningEffort) ? reasoningEffort : value?.effort,
+      ),
       fastMode: false,
     },
-    planMode: false,
-    autoPlan: false,
+    planMode: value?.planMode === true,
+    autoPlan: value?.autoPlan === true,
+  }
+}
+
+export function normalizeYoumiPreference(value?: ProviderPreferenceInput): ProviderPreference<YoumiModelOptions> {
+  const reasoningEffort = value?.modelOptions?.reasoningEffort
+  return {
+    model: normalizeDeepSeekModelId(modelIdFromInput(value)),
+    modelOptions: {
+      reasoningEffort: normalizeYoumiReasoningEffort(
+        isDeepSeekReasoningEffort(reasoningEffort) ? reasoningEffort : value?.effort,
+      ),
+      fastMode: false,
+    },
+    planMode: value?.planMode === true,
+    autoPlan: value?.autoPlan === true,
   }
 }
 
@@ -167,6 +214,7 @@ export const PROVIDER_NORMALIZERS: {
   pi: normalizePiPreference,
   deepseek: normalizeDeepSeekPreference,
   reasonix: normalizeReasonixPreference,
+  youmi: normalizeYoumiPreference,
 }
 
 export function normalizeProviderPreference<TProvider extends AgentProvider>(
@@ -186,6 +234,7 @@ export function normalizeProviderDefaults(
     pi: normalizePiPreference(value?.pi),
     deepseek: normalizeDeepSeekPreference(value?.deepseek),
     reasonix: normalizeReasonixPreference(value?.reasonix),
+    youmi: normalizeYoumiPreference(value?.youmi),
   }
 }
 
@@ -250,6 +299,14 @@ export function mergeProviderDefaultsPatch(
       modelOptions: {
         ...current.reasonix.modelOptions,
         ...patch?.reasonix?.modelOptions,
+      },
+    },
+    youmi: {
+      ...current.youmi,
+      ...patch?.youmi,
+      modelOptions: {
+        ...current.youmi.modelOptions,
+        ...patch?.youmi?.modelOptions,
       },
     },
   }

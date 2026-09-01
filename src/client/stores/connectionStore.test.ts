@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import type { CloudMachineSummary } from "../../shared/cloud-api"
-import { findCurrentMachine, useConnectionStore } from "./connectionStore"
+import { findCurrentMachine, isLoopbackHostname, useConnectionStore } from "./connectionStore"
 
 const MACHINES: CloudMachineSummary[] = [
   {
@@ -57,6 +57,17 @@ describe("connectionStore.load", () => {
     }) as unknown as typeof fetch
     await useConnectionStore.getState().load(fetchImpl)
     expect(useConnectionStore.getState().mode).toBe("local")
+  })
+})
+
+describe("isLoopbackHostname", () => {
+  test("treats local Vite hosts as loopback so we skip the cloud probe", () => {
+    expect(isLoopbackHostname("localhost")).toBe(true)
+    expect(isLoopbackHostname("localhost:5174")).toBe(true)
+    expect(isLoopbackHostname("127.0.0.1")).toBe(true)
+    expect(isLoopbackHostname("[::1]")).toBe(true)
+    expect(isLoopbackHostname("::1")).toBe(true)
+    expect(isLoopbackHostname("jakemor-mbp.kanna.sh")).toBe(false)
   })
 })
 

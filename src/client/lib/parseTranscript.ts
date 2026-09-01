@@ -52,18 +52,25 @@ function getStructuredToolResult(entry: Extract<TranscriptEntry, { kind: "tool_r
  * 合并同一 messageId 的连续思考/正文条目：ccb 的流式部分消息（thinking/
  * assistant_text 增量）共享同一个 messageId，只有合并起来才是一条完整消息，
  * 否则每个 token 增量都会渲染成独立卡片。
+ *
+ * Cursor 的 cursor-agent 思考增量历史上没有 messageId，连续的 thinking
+ * 碎片也按同一段推理合并（否则会出现十几张各十几字的「思考过程」卡片）。
  */
+function canMergeTextEntries(
+  previous: HydratedTranscriptMessage | undefined,
+  next: Extract<HydratedTranscriptMessage, { kind: "assistant_text" | "assistant_thinking" }>,
+): previous is Extract<HydratedTranscriptMessage, { kind: "assistant_text" | "assistant_thinking" }> {
+  if (!previous || previous.kind !== next.kind) return false
+  if (previous.messageId && next.messageId) return previous.messageId === next.messageId
+  return next.kind === "assistant_thinking" && !previous.messageId && !next.messageId
+}
+
 function pushOrMergeTextEntry(
   messages: HydratedTranscriptMessage[],
   next: Extract<HydratedTranscriptMessage, { kind: "assistant_text" | "assistant_thinking" }>,
 ) {
   const previous = messages[messages.length - 1]
-  if (
-    previous
-    && (previous.kind === next.kind)
-    && previous.messageId
-    && previous.messageId === next.messageId
-  ) {
+  if (canMergeTextEntries(previous, next)) {
     // 旧版流式推送的是「到当前为止的全文」快照：快照是前面内容的超集，
     // 用替换而不是追加，避免二次方膨胀；新版推增量，互不包含，追加语义不变。
     previous.text = next.text.startsWith(previous.text) ? next.text : previous.text + next.text
@@ -203,6 +210,14 @@ export function processTranscriptMessages(entries: TranscriptEntry[]): HydratedT
           kind: "handoff_boundary",
           fromProvider: entry.fromProvider,
           toProvider: entry.toProvider,
+        })
+        break
+      case "collaboration_review":
+        messages.push({
+          ...createBaseMessage(entry),
+          kind: "collaboration_review",
+          verdict: entry.verdict,
+          summary: entry.summary,
         })
         break
       case "session_restored":

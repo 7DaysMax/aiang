@@ -244,8 +244,16 @@ describe("read models", () => {
     )
     expect(chat?.runtime.provider).toBe("claude")
     expect(chat?.queuedMessages.map((message) => message.content)).toEqual(["follow up"])
-    // UI 端 provider 目录：DeepSeek（默认，魔改引擎）+ Reasonix + Claude（官方引擎）+ Codex。
-    expect(chat?.availableProviders.map((provider) => provider.id)).toEqual(["deepseek", "reasonix", "claude", "codex"])
+    // UI 端 provider 目录：Youmi + DeepSeek + Reasonix + Claude + Cursor + Codex。
+    expect(chat?.availableProviders.map((provider) => provider.id)).toEqual([
+      "claude",
+      "cursor",
+      "codex",
+      "youmi",
+      "deepseek",
+      "reasonix",
+      "pi",
+    ])
   })
 
   test("prefers saved project metadata over discovered entries for the same path", () => {

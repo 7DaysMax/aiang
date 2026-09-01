@@ -1,12 +1,20 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type DragEvent, type ReactNode, type RefObject } from "react"
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type DragEvent, type ReactNode, type RefObject } from "react"
 import type { GroupImperativeHandle } from "react-resizable-panels"
 import { useNavigate, useOutletContext } from "react-router-dom"
 import type { ChatInputHandle } from "../../components/chat-ui/ChatInput"
 import { ChatNavbar } from "../../components/chat-ui/ChatNavbar"
-import { BrowserPanel } from "../../components/chat-ui/BrowserPanel"
-import { GitPanel } from "../../components/chat-ui/GitPanel"
-import { FilesPanel } from "../../components/chat-ui/FilesPanel"
-import { InsightsPanel } from "../../components/chat-ui/InsightsPanel"
+const BrowserPanel = lazy(() =>
+  import("../../components/chat-ui/BrowserPanel").then((module) => ({ default: module.BrowserPanel })),
+)
+const GitPanel = lazy(() =>
+  import("../../components/chat-ui/GitPanel").then((module) => ({ default: module.GitPanel })),
+)
+const FilesPanel = lazy(() =>
+  import("../../components/chat-ui/FilesPanel").then((module) => ({ default: module.FilesPanel })),
+)
+const InsightsPanel = lazy(() =>
+  import("../../components/chat-ui/InsightsPanel").then((module) => ({ default: module.InsightsPanel })),
+)
 import { useAppDialog } from "../../components/ui/app-dialog"
 import { useDeepSeekBalanceStore } from "../../stores/deepSeekBalanceStore"
 import { Card, CardContent } from "../../components/ui/card"
@@ -27,6 +35,7 @@ import { TERMINAL_TOGGLE_ANIMATION_DURATION_MS } from "../terminalToggleAnimatio
 import { useRightSidebarToggleAnimation } from "../useRightSidebarToggleAnimation"
 import { useStickyChatFocus } from "../useStickyChatFocus"
 import { useTerminalToggleAnimation } from "../useTerminalToggleAnimation"
+import { buildCollaborationRetryPrompt } from "../../../shared/collaboration"
 import type { AgentProvider, ChatSkillsSnapshot, TranscriptEntry } from "../../../shared/types"
 import type { VirtualCommand } from "../../lib/virtualCommands"
 import type { KannaState } from "../useKannaState"
@@ -617,6 +626,7 @@ export function ChatPage() {
     handleSyncBranch,
     handleGenerateCommitMessage,
     handleInitializeGit,
+    handleAcceptSnapshotBaseline,
     handleGetGitHubPublishInfo,
     handleCheckGitHubRepoAvailability,
     handleSetupGitHub,
@@ -875,6 +885,10 @@ export function ChatPage() {
     await state.handleSend(content, options)
   }, [state.handleSend])
 
+  const handleCollaborationRetry = useCallback((summary: string) => {
+    void handleChatSubmit(buildCollaborationRetryPrompt(summary), { collaboration: true })
+  }, [handleChatSubmit])
+
   const handleListSkills = useCallback(
     (provider: AgentProvider) =>
       state.socket.command<ChatSkillsSnapshot>({
@@ -921,7 +935,10 @@ export function ChatPage() {
     [state.socket, state.activeChatId]
   )
 
-  const transcriptRenderOptions = useMemo(() => ({ loadEntryDebugRaw }), [loadEntryDebugRaw])
+  const transcriptRenderOptions = useMemo(
+    () => ({ loadEntryDebugRaw, onCollaborationRetry: handleCollaborationRetry }),
+    [loadEntryDebugRaw, handleCollaborationRetry],
+  )
 
   // One cache per chat: entry ids are chat-scoped, and leaving a chat should
   // not keep its payloads resident.
@@ -1231,6 +1248,7 @@ export function ChatPage() {
       onCreateBranch: handleCreateBranch,
       onGenerateCommitMessage: handleGenerateCommitMessage,
       onInitializeGit: handleInitializeGit,
+      onAcceptSnapshotBaseline: handleAcceptSnapshotBaseline,
       onGetGitHubPublishInfo: handleGetGitHubPublishInfo,
       onCheckGitHubRepoAvailability: handleCheckGitHubRepoAvailability,
       onSetupGitHub: handleSetupGitHub,
@@ -1252,6 +1270,7 @@ export function ChatPage() {
     handleDiscardDiffFile,
     handleGenerateCommitMessage,
     handleGetGitHubPublishInfo,
+    handleAcceptSnapshotBaseline,
     handleIgnoreDiffFile,
     handleIgnoreDiffFolder,
     handleInitializeGit,
@@ -1270,7 +1289,7 @@ export function ChatPage() {
     state.editorLabel,
     wrapDiffLines,
   ])
-  const rightPanelContent = activeRightPanel === "browser" && projectId
+  const rightPanelInner = activeRightPanel === "browser" && projectId
     ? <BrowserPanel projectId={projectId} socket={state.socket} onClose={handleCloseRightSidebar} onRunQuickAction={handleRunQuickAction} />
     : activeRightPanel === "files" && projectId
       ? <FilesPanel projectId={projectId} onClose={handleCloseRightSidebar} />
@@ -1285,6 +1304,9 @@ export function ChatPage() {
       : gitPanelContentProps
         ? <ChatSidebarContent {...gitPanelContentProps} />
         : null
+  const rightPanelContent = rightPanelInner
+    ? <Suspense fallback={<div className="h-full bg-background" />}>{rightPanelInner}</Suspense>
+    : null
 
   return (
     <div ref={layoutRootRef} className="flex-1 flex flex-col min-w-0 relative">

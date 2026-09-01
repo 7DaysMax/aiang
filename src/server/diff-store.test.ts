@@ -70,7 +70,12 @@ describe("DiffStore", () => {
     await expect(store.readPatch({ projectId: "project-1", projectPath: repoRoot, path: "app.txt" })).resolves.toMatchObject({
       patch: expect.stringContaining("-base"),
     })
-  })
+    // Init, commit, one refresh and one patch add up to roughly fifteen git
+    // subprocesses. Windows charges a few hundred milliseconds per spawn once a
+    // virus scanner is inspecting the freshly created repository, which puts
+    // this over Bun's 5s default while the same work takes well under a second
+    // elsewhere.
+  }, 30_000)
 
   describe("symlinks", () => {
     /**
@@ -701,7 +706,12 @@ describe("DiffStore", () => {
       path: "app.txt",
     })
 
-    expect(await readFile(path.join(repoRoot, "app.txt"), "utf8")).toBe("base\n")
+    // What matters is that the content came back, not which newline it landed
+    // on: `core.autocrlf=true` ships enabled in Git for Windows, so restore
+    // writes CRLF and git normalizes it back to LF when it reads the file —
+    // hence the empty `git status` asserted on the next line.
+    const restored = await readFile(path.join(repoRoot, "app.txt"), "utf8")
+    expect(restored.replace(/\r\n/g, "\n")).toBe("base\n")
     expect(store.getProjectSnapshot("project-1").files).toHaveLength(0)
   })
 
@@ -1397,6 +1407,78 @@ describe("DiffStore snapshot mode (no git)", () => {
     expect(snapshot.files).toHaveLength(0)
   })
 
+  test("keeps patchDigest stable across refreshes that changed nothing", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "kanna-snapshot-digest-"))
+    const dataDir = await mkdtemp(path.join(tmpdir(), "kanna-snapshot-digest-data-"))
+    tempDirs.push(root, dataDir)
+    await writeFile(path.join(root, "app.ts"), "const a = 1\n", "utf8")
+
+    const store = new DiffStore(dataDir)
+    await store.initialize()
+    await store.refreshSnapshot("project-1", root)
+
+    await writeFile(path.join(root, "app.ts"), "const a = 2\n", "utf8")
+    await store.refreshSnapshot("project-1", root)
+    const firstDigest = store.getProjectSnapshot("project-1").files[0]?.patchDigest
+    expect(firstDigest).toBeTruthy()
+
+    // 摘要是客户端的 patch 缓存键：内容没变就必须原样不动，否则每次刷新都会
+    // 判定快照有变化、清空缓存并重新拉取每个可见 diff。
+    await expect(store.refreshSnapshot("project-1", root)).resolves.toBe(false)
+    expect(store.getProjectSnapshot("project-1").files[0]?.patchDigest).toBe(firstDigest)
+
+    // 内容变了才换摘要。
+    await writeFile(path.join(root, "app.ts"), "const a = 3\n", "utf8")
+    await expect(store.refreshSnapshot("project-1", root)).resolves.toBe(true)
+    expect(store.getProjectSnapshot("project-1").files[0]?.patchDigest).not.toBe(firstDigest)
+  })
+
+  test("does not invent line counts for untracked 3D models", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "kanna-snapshot-glb-"))
+    const dataDir = await mkdtemp(path.join(tmpdir(), "kanna-snapshot-glb-data-"))
+    tempDirs.push(root, dataDir)
+    await writeFile(path.join(root, "keep.txt"), "ok\n", "utf8")
+
+    const store = new DiffStore(dataDir)
+    await store.initialize()
+    await store.refreshSnapshot("project-1", root)
+
+    // GLB 是二进制网格；旧逻辑会按 0x0A 数出假的 +N，并在 diff 里显示成「代码」。
+    const glbBytes = Buffer.from([
+      0x67, 0x6c, 0x54, 0x46, // glTF magic
+      0x02, 0x00, 0x00, 0x00,
+      ...Array.from({ length: 240 }, (_, i) => (i % 11 === 0 ? 0x0a : 0x80)),
+    ])
+    await mkdir(path.join(root, "models"), { recursive: true })
+    await writeFile(path.join(root, "models/ssj3.glb"), glbBytes)
+    await store.refreshSnapshot("project-1", root)
+
+    const file = store.getProjectSnapshot("project-1").files.find((entry) => entry.path === "models/ssj3.glb")
+    expect(file).toMatchObject({ changeType: "added", isUntracked: true, additions: 0, deletions: 0 })
+  }, 15_000)
+
+  test("does not invent line counts for untracked binary images", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "kanna-snapshot-png-"))
+    const dataDir = await mkdtemp(path.join(tmpdir(), "kanna-snapshot-png-data-"))
+    tempDirs.push(root, dataDir)
+    await writeFile(path.join(root, "keep.txt"), "ok\n", "utf8")
+
+    const store = new DiffStore(dataDir)
+    await store.initialize()
+    await store.refreshSnapshot("project-1", root)
+
+    // PNG 文件头里天然可能含 0x0A；旧逻辑会把它们当成「行」数出 +几百。
+    const pngBytes = Buffer.from([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      ...Array.from({ length: 200 }, (_, i) => (i % 13 === 0 ? 0x0a : 0x41)),
+    ])
+    await writeFile(path.join(root, "shot.png"), pngBytes)
+    await store.refreshSnapshot("project-1", root)
+
+    const file = store.getProjectSnapshot("project-1").files.find((entry) => entry.path === "shot.png")
+    expect(file).toMatchObject({ changeType: "added", isUntracked: true, additions: 0, deletions: 0 })
+  })
+
   test("ignore file stops tracking it in snapshot mode", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "kanna-snapshot-ignore-"))
     const dataDir = await mkdtemp(path.join(tmpdir(), "kanna-snapshot-ignore-data-"))
@@ -1418,5 +1500,32 @@ describe("DiffStore snapshot mode (no git)", () => {
     await writeFile(path.join(root, "ignored.ts"), "export const a = 3\n", "utf8")
     await store.refreshSnapshot("project-1", root)
     expect(store.getProjectSnapshot("project-1").files).toHaveLength(0)
+  })
+
+  test("acceptSnapshotBaseline clears stacked changes without rewriting files", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "kanna-snapshot-accept-"))
+    const dataDir = await mkdtemp(path.join(tmpdir(), "kanna-snapshot-accept-data-"))
+    tempDirs.push(root, dataDir)
+    await writeFile(path.join(root, "app.ts"), "const a = 1\n", "utf8")
+
+    const store = new DiffStore(dataDir)
+    await store.initialize()
+    await store.refreshSnapshot("project-1", root)
+
+    await writeFile(path.join(root, "app.ts"), "const a = 2\n", "utf8")
+    await writeFile(path.join(root, "extra.ts"), "export {}\n", "utf8")
+    await store.refreshSnapshot("project-1", root)
+    expect(store.getProjectSnapshot("project-1").files.length).toBeGreaterThan(0)
+
+    await store.acceptSnapshotBaseline({ projectId: "project-1", projectPath: root })
+    expect(store.getProjectSnapshot("project-1").files).toHaveLength(0)
+    expect(await readFile(path.join(root, "app.ts"), "utf8")).toBe("const a = 2\n")
+    expect(await readFile(path.join(root, "extra.ts"), "utf8")).toBe("export {}\n")
+
+    await writeFile(path.join(root, "app.ts"), "const a = 3\n", "utf8")
+    await store.refreshSnapshot("project-1", root)
+    const files = store.getProjectSnapshot("project-1").files
+    expect(files).toHaveLength(1)
+    expect(files[0]?.path).toBe("app.ts")
   })
 })
