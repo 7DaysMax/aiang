@@ -49,6 +49,8 @@ bun run dev:desktop
 
 ## Windows 安装器和便携版
 
+仓库的 **Actions → Build Windows Desktop → Run workflow** 可以在干净的 Windows 构建机上生成安装器和便携版，无需上传 API Key 或账号配置。任务通过类型检查、测试、打包后端启动检查后，才上传包含两个 `.exe` 和 SHA-256 校验值的下载包；Actions 产物保留 14 天，下载需要登录 GitHub。此工作流不会发布 npm 包或创建正式 Release。
+
 在 Windows x64 构建环境中，从上面的全新克隆执行：
 
 ```powershell

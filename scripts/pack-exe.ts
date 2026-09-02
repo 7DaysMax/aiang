@@ -22,6 +22,14 @@ function copyDir(src: string, dest: string) {
 }
 
 async function main() {
+  if (process.platform !== "win32") {
+    throw new Error("Windows packages must be built on Windows. Use the Build Windows Desktop GitHub Actions workflow.")
+  }
+  const nodeBin = Bun.which("node")
+  if (!nodeBin) {
+    throw new Error("Node.js is required for electron-builder. Install Node.js and add node to PATH.")
+  }
+
   console.log("→ build client + export-viewer")
   await $`bun run build`.cwd(ROOT)
 
@@ -104,15 +112,13 @@ async function main() {
     throw new Error("electron-builder not installed (node_modules/electron-builder/cli.js missing)")
   }
   // electron-builder expects Node (not Bun) on Windows.
-  const nodeBin = process.env.npm_node_execpath
-    || (process.platform === "win32"
-      ? "C:\\Program Files\\nodejs\\node.exe"
-      : "node")
   const builder = Bun.spawn([
     nodeBin,
     electronBuilderCli,
     "--win",
     "--x64",
+    "--publish",
+    "never",
     "--config.directories.output=release/electron",
   ], {
     cwd: ROOT,
