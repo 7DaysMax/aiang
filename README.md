@@ -26,6 +26,8 @@ Youmi 基于 Kanna 工作台演进，将 Youmi、Codex、Claude、Cursor、DeepS
 
 ## 快速开始
 
+仓库不提供个人 API Key 或登录凭据。构建无需模型密钥，运行时由每位使用者配置自己的账号；独立构建、Windows 打包与安全注意事项见 [自行构建指南](docs/self-build.md)。
+
 ### 1. 安装并运行源码
 
 需要 Git、Git LFS 和 **Bun ≥ 1.3.5**，并确保命令可从终端调用。仓库中的引擎二进制由 Git LFS 管理；使用源码 ZIP 或只下载 LFS 指针文件，不能替代完整的引擎文件。

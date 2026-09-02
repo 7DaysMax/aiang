@@ -11,6 +11,29 @@ release/
 .env.*
 !.env.example
 
+# Local account state and exported configuration (never ship credentials)
+/.aiang/
+/.aiang-dev/
+/.penguin/
+/claude-config/
+/data/settings.json
+/data/transcripts/
+/data/snapshots/
+/config.json
+/settings.json
+/llm-provider.json
+/model-profiles*.json
+/auth.json
+/credentials.json
+/.credentials.json
+/.codex/auth.json
+/.claude/.credentials.json
+*.local.json
+*.pem
+*.key
+*.p12
+*.pfx
+
 # editor / OS
 .DS_Store
 Thumbs.db

@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { isPlausibleApiKey } from "./api-key"
 
 describe("isPlausibleApiKey", () => {
-  test("accepts a normal DeepSeek-style key", () => {
+  test("accepts a plausible synthetic key without using real credentials", () => {
+    // Deliberately fake: format validation must never need a live account key.
     expect(isPlausibleApiKey("sk-test-placeholder-do-not-use")).toBe(true)
   })
 
