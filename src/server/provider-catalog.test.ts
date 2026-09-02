@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test"
 import {
   SERVER_PROVIDERS,
   applyClaudeSdkModels,
+  applyCodexModels,
   applyCursorModels,
   applyPiFaveModels,
   cursorModelIdForOptions,
@@ -115,38 +116,76 @@ describe("provider catalog normalization", () => {
   })
 
   test("normalizes Codex model options and fast mode defaults", () => {
-    expect(normalizeCodexModelOptions("deepseek-v4-flash", undefined)).toEqual({
-      reasoningEffort: "high",
+    expect(normalizeCodexModelOptions("gpt-5.6-sol", undefined)).toEqual({
+      reasoningEffort: "low",
       fastMode: false,
     })
 
-    const normalized = normalizeCodexModelOptions("deepseek-v4-pro", {
+    const normalized = normalizeCodexModelOptions("gpt-5.6-terra", {
       codex: {
-        reasoningEffort: "max",
+        reasoningEffort: "ultra",
         fastMode: true,
       },
     })
 
     expect(normalized).toEqual({
-      reasoningEffort: "max",
-      fastMode: false,
+      reasoningEffort: "ultra",
+      fastMode: true,
     })
-    expect(serviceTierFromModelOptions(normalized)).toBeUndefined()
+    expect(serviceTierFromModelOptions(normalized)).toBe("fast")
 
-    // DeepSeek V4 无 fast mode：spawn 时一律剥掉。
-    expect(normalizeCodexModelOptions("deepseek-v4-flash", {
+    // Spark does not expose a fast service tier and only supports low–xhigh.
+    expect(normalizeCodexModelOptions("gpt-5.3-codex-spark", {
       codex: { reasoningEffort: "high", fastMode: true },
     }).fastMode).toBe(false)
-    expect(normalizeCodexModelOptions("deepseek-v4-pro", {
-      codex: { reasoningEffort: "high", fastMode: true },
-    }).fastMode).toBe(false)
-
-    expect(normalizeCodexModelOptions("deepseek-v4-flash", {
+    expect(normalizeCodexModelOptions("gpt-5.3-codex-spark", {
       codex: { reasoningEffort: "ultra" },
     }).reasoningEffort).toBe("high")
-    expect(normalizeCodexModelOptions("deepseek-v4-pro", {
-      codex: { reasoningEffort: "medium" },
-    }).reasoningEffort).toBe("high")
+  })
+
+  test("applyCodexModels uses the official account catalog and per-model capabilities", () => {
+    expect(applyCodexModels([
+      {
+        id: "gpt-5.6-sol",
+        model: "gpt-5.6-sol",
+        displayName: "GPT-5.6-Sol",
+        supportedReasoningEfforts: [
+          { reasoningEffort: "low", description: "Fast" },
+          { reasoningEffort: "ultra", description: "Delegates" },
+        ],
+        defaultReasoningEffort: "low",
+        additionalSpeedTiers: ["fast"],
+        isDefault: true,
+      },
+      {
+        id: "gpt-next",
+        model: "gpt-next",
+        displayName: "GPT Next",
+        supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+        defaultReasoningEffort: "medium",
+        serviceTiers: [],
+      },
+      {
+        id: "hidden-model",
+        model: "hidden-model",
+        displayName: "Hidden",
+        hidden: true,
+        supportedReasoningEfforts: [],
+        defaultReasoningEffort: "medium",
+      },
+    ])).toBe(true)
+
+    const codex = SERVER_PROVIDERS.find((provider) => provider.id === "codex")
+    expect(codex?.defaultModel).toBe("gpt-5.6-sol")
+    expect(codex?.models.map((model) => [model.id, model.label])).toEqual([
+      ["gpt-5.6-sol", "GPT-5.6-Sol"],
+      ["gpt-next", "GPT Next"],
+    ])
+    expect(codex?.models[0]?.supportsFastMode).toBe(true)
+    expect(codex?.models[0]?.supportedReasoningEfforts?.map((option) => option.id)).toEqual(["low", "ultra"])
+    expect(normalizeCodexModelOptions("gpt-next", {
+      codex: { reasoningEffort: "ultra", fastMode: true },
+    })).toEqual({ reasoningEffort: "medium", fastMode: false })
   })
 
   test("normalizes Cursor model options and applies the fast model suffix", () => {
@@ -237,14 +276,15 @@ describe("provider catalog normalization", () => {
   })
 
   test("normalizes server model ids through the shared alias catalog", () => {
-    expect(normalizeServerModel("codex")).toBe("deepseek-v4-flash")
+    expect(normalizeServerModel("codex")).toBe("gpt-5.6-sol")
     expect(normalizeServerModel("claude", "fable")).toBe("fable")
     expect(normalizeServerModel("claude", "opus")).toBe("opus")
     // Version-pinned ids persisted by older Kanna versions fold into the alias.
     expect(normalizeServerModel("claude", "claude-opus-4-8")).toBe("opus")
     expect(normalizeServerModel("claude", "claude-haiku-4-5-20251001")).toBe("haiku")
-    expect(normalizeServerModel("codex", "deepseek-chat")).toBe("deepseek-v4-flash")
-    expect(normalizeServerModel("codex", "deepseek-reasoner")).toBe("deepseek-v4-pro")
+    expect(normalizeServerModel("codex", "deepseek-chat")).toBe("gpt-5.6-sol")
+    expect(normalizeServerModel("codex", "deepseek-reasoner")).toBe("gpt-5.6-sol")
+    expect(normalizeServerModel("codex", "gpt-future")).toBe("gpt-future")
   })
 
   test("resolves Claude API model ids for 1m context window", () => {
@@ -281,6 +321,7 @@ describe("provider catalog normalization", () => {
       ["haiku", "Haiku 4.5"],
       ["deepseek-v4-flash", "DeepSeek Flash"],
       ["deepseek-v4-pro", "DeepSeek Pro"],
+      ["deepseek-v4-flash-vision-exp", "DeepSeek Flash Vision (Exp)"],
     ])
     // The recommended ("default") row drives the default model.
     expect(claude?.defaultModel).toBe("sonnet")
@@ -308,6 +349,7 @@ describe("provider catalog normalization", () => {
       ["nova", "Nova 2"],
       ["deepseek-v4-flash", "DeepSeek Flash"],
       ["deepseek-v4-pro", "DeepSeek Pro"],
+      ["deepseek-v4-flash-vision-exp", "DeepSeek Flash Vision (Exp)"],
     ])
     // Fable keeps its pinned fixed window; the [1m] variant row collapses
     // into sonnet's context window selector rather than its own entry.

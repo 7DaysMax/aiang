@@ -2,6 +2,7 @@ import type {
   AgentProvider,
   ClaudeModelOptions,
   CodexModelOptions,
+  CodexReasoningEffort,
   CursorModelOptions,
   ClaudeContextWindow,
   DeepSeekModelOptions,
@@ -21,6 +22,7 @@ import {
   withPiFaveModels,
   normalizeClaudeContextWindow,
   normalizeClaudeFastMode,
+  normalizeCodexModelId,
   normalizeCodexReasoningEffort,
   normalizeDeepSeekReasoningEffort,
   normalizeYoumiReasoningEffort,
@@ -31,7 +33,6 @@ import {
   isDeepSeekReasoningEffort,
   isPiReasoningEffort,
   modelIdFamily,
-  supportsProviderFastMode,
 } from "../shared/types"
 
 export interface ClaudeSdkModelInfo {
@@ -196,6 +197,86 @@ export interface CursorCliModelInfo {
   isDefault?: boolean
 }
 
+export interface CodexAppServerModelInfo {
+  id: string
+  model: string
+  displayName: string
+  description?: string
+  hidden?: boolean
+  supportedReasoningEfforts: ReadonlyArray<{
+    reasoningEffort: string
+    description?: string
+  }>
+  defaultReasoningEffort: string
+  additionalSpeedTiers?: readonly string[]
+  serviceTiers?: ReadonlyArray<{ id: string }>
+  isDefault?: boolean
+}
+
+/**
+ * Replace the Codex fallback catalog with the current account's authoritative
+ * `model/list` response. The app-server owns availability, labels, supported
+ * effort levels, defaults, and speed tiers; keeping that metadata intact
+ * prevents the picker from drifting when OpenAI adds or retires models.
+ */
+export function applyCodexModels(models: ReadonlyArray<CodexAppServerModelInfo>): boolean {
+  const codexIndex = SERVER_PROVIDERS.findIndex((provider) => provider.id === "codex")
+  const codexProvider = SERVER_PROVIDERS[codexIndex]
+  if (!codexProvider) return false
+
+  const visibleModels = models.filter((model) => !model.hidden)
+  const nextModels: ProviderModelOption[] = visibleModels.map((model) => {
+    const supportedReasoningEfforts = model.supportedReasoningEfforts
+      .filter((option) => isCodexReasoningEffort(option.reasoningEffort))
+      .map((option) => ({
+        id: option.reasoningEffort as CodexReasoningEffort,
+        label: option.reasoningEffort === "xhigh"
+          ? "Extra High"
+          : option.reasoningEffort[0]!.toUpperCase() + option.reasoningEffort.slice(1),
+        ...(option.description ? { description: option.description } : {}),
+      }))
+    const defaultReasoningEffort = isCodexReasoningEffort(model.defaultReasoningEffort)
+      ? model.defaultReasoningEffort
+      : undefined
+    const supportsFastMode = model.additionalSpeedTiers?.includes("fast")
+      || model.serviceTiers?.some((tier) => tier.id === "fast" || tier.id === "priority")
+
+    return {
+      id: model.model || model.id,
+      label: model.displayName || deriveModelLabel(model.model || model.id),
+      supportsEffort: supportedReasoningEfforts.length > 0,
+      ...(supportedReasoningEfforts.length > 0 ? { supportedReasoningEfforts } : {}),
+      ...(defaultReasoningEffort ? { defaultReasoningEffort } : {}),
+      ...(supportsFastMode ? { supportsFastMode: true } : {}),
+    }
+  })
+  if (nextModels.length === 0) return false
+
+  const reportedDefault = visibleModels.find((model) => model.isDefault)
+  const reportedDefaultId = reportedDefault?.model || reportedDefault?.id
+  const defaultModel = reportedDefaultId && nextModels.some((model) => model.id === reportedDefaultId)
+    ? reportedDefaultId
+    : nextModels.some((model) => model.id === codexProvider.defaultModel)
+      ? codexProvider.defaultModel
+      : nextModels[0]!.id
+
+  if (
+    defaultModel === codexProvider.defaultModel
+    && JSON.stringify(nextModels) === JSON.stringify(codexProvider.models)
+  ) {
+    return false
+  }
+
+  SERVER_PROVIDERS.splice(codexIndex, 1, {
+    ...codexProvider,
+    defaultModel,
+    defaultEffort: nextModels.find((model) => model.id === defaultModel)?.defaultReasoningEffort
+      ?? codexProvider.defaultEffort,
+    models: nextModels,
+  })
+  return true
+}
+
 // The Cursor list is long and flat, so group it by model family for the picker.
 // Order requested by product: composer, then Anthropic, OpenAI/GPT, Kimi, GLM,
 // Grok, Gemini, then everything else (e.g. "auto"). Grok ids are prefixed
@@ -273,12 +354,13 @@ export function getServerProviderCatalog(provider: AgentProvider): ProviderCatal
 
 export function normalizeServerModel(provider: AgentProvider, model?: string): string {
   const catalog = getServerProviderCatalog(provider)
-  const normalizedModel = normalizeProviderModelId(provider, model, catalog.defaultModel)
-  // Pi accepts arbitrary OpenRouter model ids; Cursor's and Claude's valid ids
-  // are whatever the harness reports at runtime (applyCursorModels /
-  // applyClaudeSdkModels) — for all three, the catalog is only a picker, so
-  // unknown ids pass through for the provider to validate.
-  if (provider === "pi" || provider === "cursor" || provider === "claude") {
+  const normalizedModel = provider === "codex"
+    ? normalizeCodexModelId(model, catalog.defaultModel)
+    : normalizeProviderModelId(provider, model, catalog.defaultModel)
+  // Pi accepts arbitrary OpenRouter model ids; Cursor, Claude, and Codex valid
+  // ids come from their live harness catalogs. For all four, the catalog is a
+  // picker and the harness remains the final validator.
+  if (provider === "pi" || provider === "cursor" || provider === "claude" || provider === "codex") {
     return normalizedModel
   }
   if (catalog.models.some((candidate) => candidate.id === normalizedModel)) {
@@ -323,14 +405,15 @@ export function normalizeCodexModelOptions(
   legacyEffort?: string,
 ): CodexModelOptions {
   const reasoningEffort = modelOptions?.codex?.reasoningEffort
+  const modelOption = getServerProviderCatalog("codex").models.find((candidate) => candidate.id === model)
   return {
     reasoningEffort: normalizeCodexReasoningEffort(
       model,
       isCodexReasoningEffort(reasoningEffort) ? reasoningEffort : legacyEffort,
+      modelOption,
     ),
-    // Spawn-time gating: fast mode only reaches models that support it
-    // (per Codex docs: GPT-5.6/5.5/5.4 — not 5.3 Codex or Spark).
-    fastMode: supportsProviderFastMode("codex", model) && modelOptions?.codex?.fastMode === true,
+    // Spawn-time gating follows the live app-server model metadata.
+    fastMode: modelOption?.supportsFastMode === true && modelOptions?.codex?.fastMode === true,
   }
 }
 

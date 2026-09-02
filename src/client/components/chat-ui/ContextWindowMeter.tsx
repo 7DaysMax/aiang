@@ -1,6 +1,7 @@
 import { cn } from "../../lib/utils"
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "../../lib/contextWindow"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip"
+import ContextCards from "@/components/primitives/ContextCards"
 
 function formatPercentage(value: number | null): string | null {
   if (value === null || !Number.isFinite(value)) {
@@ -72,7 +73,7 @@ export function ContextWindowMeter({ usage }: { usage: ContextWindowSnapshot }) 
           </span>
         </button>
       </TooltipTrigger>
-      <TooltipContent side="top" align="center" className="w-max max-w-none px-3 py-2">
+      <TooltipContent side="top" align="center" className="w-[min(24rem,calc(100vw-1rem))] max-w-none px-3 py-2">
         <div className="space-y-1.5 leading-tight">
           {usage.maxTokens !== undefined && usedPercentage ? (
             <div className="whitespace-nowrap text-xs font-medium text-foreground">
@@ -87,6 +88,20 @@ export function ContextWindowMeter({ usage }: { usage: ContextWindowSnapshot }) 
               {formatContextWindowTokens(usage.usedTokens)} tokens used so far
             </div>
           )}
+          <ContextCards
+            className="mt-2 max-w-none"
+            labels={{ header: "当前上下文", count: formatContextWindowTokens(usage.usedTokens) }}
+            chunks={[{
+              title: "会话上下文窗口",
+              chars: usedPercentage ?? `${formatContextWindowTokens(usage.usedTokens)} tokens`,
+              body: usage.maxTokens !== undefined
+                ? `已使用 ${formatContextWindowTokens(usage.usedTokens)} / ${formatContextWindowTokens(usage.maxTokens)} tokens。继续对话会实时更新。`
+                : `本会话已使用 ${formatContextWindowTokens(usage.usedTokens)} tokens。`,
+              source: "当前会话",
+              badge: "CTX",
+              tone: "bg-accent",
+            }]}
+          />
         </div>
       </TooltipContent>
     </Tooltip>

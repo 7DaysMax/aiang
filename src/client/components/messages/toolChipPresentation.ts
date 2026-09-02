@@ -1,8 +1,6 @@
 import type { ProcessedToolCall } from "./types"
 import { formatActivityDuration, formatBashCommandTitle, toTitleCase } from "../../lib/formatters"
-import type { DiffChipFile, DiffChipLine } from "../bui/DiffChips"
-import type { ToolChipDetailLine } from "../bui/ToolChipRow"
-import type { ToolChipIconKind } from "../bui/ToolChipIcons"
+import type { LiveToolDiff as DiffChipFile, ToolDiffLine as DiffChipLine, ToolDetailLine as ToolChipDetailLine, ToolChipIconKind } from "@/components/primitives/ToolChips"
 
 function basename(path: string | undefined): string {
   if (!path) return ""

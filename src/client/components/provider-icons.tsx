@@ -226,8 +226,7 @@ export const PROVIDER_ICONS: Record<AgentProvider, IconComponent> = {
   codex: OpenAIIcon,
   cursor: CursorIcon,
   pi: PiIcon,
-  // ccb 是 Claude Code 魔改，用 Claude 官方标，不用 DeepSeek 鲸。
-  deepseek: AnthropicIcon,
+  deepseek: DeepSeekIcon,
   reasonix: ReasonixIcon,
   youmi: YoumiIcon,
 }

@@ -37,6 +37,7 @@ function buildCodexMcpConfigArgs(): string[] {
   ]
 }
 import {
+  type AgentMessageDeltaNotification,
   type AccountRateLimitsUpdatedNotification,
   type CollabAgentToolCallItem,
   type ContextCompactedNotification,
@@ -58,8 +59,13 @@ import {
   type ItemStartedNotification,
   type JsonRpcResponse,
   type McpToolCallItem,
+  type CodexAppServerModel,
+  type ModelListParams,
+  type ModelListResponse,
   type PlanDeltaNotification,
   type ReasoningItem,
+  type ReasoningSummaryTextDeltaNotification,
+  type ReasoningTextDeltaNotification,
   type ServerNotification,
   type ServerRequest,
   type SkillsListParams,
@@ -119,12 +125,12 @@ interface PendingTurn {
   planTextByItemId: Map<string, string>
   todoSequence: number
   pendingWebSearchResultToolId: string | null
-  /** codex 协议只推 reasoning 的 start/completed，没有 delta：用同一个
-   *  messageId 累积成一个思考卡片，避免每个 reasoning item 独立成卡。 */
+  /** All reasoning items in a turn merge into one visible thinking card. */
   reasoningMessageId: string | null
-  /** agentMessage 的 start 可能带部分文本（completed 是全文）：记录 start
-   *  文本，completed 时只推增量，客户端按 messageId 合并成一条消息。 */
-  agentMessageStartedTextByItemId: Map<string, string>
+  /** Text already emitted for each streaming reasoning item. */
+  reasoningTextByItemId: Map<string, string>
+  /** Text already emitted for each streaming agent message item. */
+  agentMessageTextByItemId: Map<string, string>
   resolved: boolean
   onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
   onApprovalRequest?: (
@@ -832,6 +838,68 @@ export class CodexAppServerManager {
     return await this.probeAccountRateLimits(probeCwd)
   }
 
+  /**
+   * Read the current account's official Codex model catalog. Reuses a live
+   * app-server session when possible and otherwise creates a short-lived probe.
+   */
+  async listModels(probeCwd: string): Promise<CodexAppServerModel[] | null> {
+    for (const context of this.sessions.values()) {
+      if (context.closed) continue
+      return await this.listModelsFromContext(context)
+    }
+    return await this.probeModels(probeCwd)
+  }
+
+  private async listModelsFromContext(context: SessionContext): Promise<CodexAppServerModel[]> {
+    const models: CodexAppServerModel[] = []
+    let cursor: string | null = null
+    do {
+      const response: ModelListResponse = await this.sendRequest<ModelListResponse>(context, "model/list", {
+        cursor,
+        limit: 100,
+        includeHidden: false,
+      } satisfies ModelListParams)
+      models.push(...(response.data ?? []))
+      cursor = response.nextCursor ?? null
+    } while (cursor)
+    return models
+  }
+
+  private async probeModels(cwd: string): Promise<CodexAppServerModel[] | null> {
+    let child: CodexAppServerProcess
+    try {
+      child = this.spawnProcess(cwd)
+    } catch {
+      return null
+    }
+    const context: SessionContext = {
+      chatId: `models-probe-${randomUUID()}`,
+      cwd,
+      child,
+      pendingRequests: new Map(),
+      pendingTurn: null,
+      sessionToken: null,
+      stderrLines: [],
+      closed: false,
+    }
+    this.attachListeners(context)
+    try {
+      await this.sendRequest(context, "initialize", {
+        clientInfo: { name: "kanna_desktop", title: "Kanna", version: "0.1.0" },
+        capabilities: { experimentalApi: true },
+      } satisfies InitializeParams)
+      this.writeMessage(context, { method: "initialized" })
+      return await this.listModelsFromContext(context)
+    } finally {
+      context.closed = true
+      try {
+        child.kill("SIGKILL")
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   private async probeAccountRateLimits(cwd: string): Promise<GetAccountRateLimitsResponse | null> {
     let child: CodexAppServerProcess
     try {
@@ -987,7 +1055,8 @@ export class CodexAppServerManager {
       todoSequence: 0,
       pendingWebSearchResultToolId: null,
       reasoningMessageId: null,
-      agentMessageStartedTextByItemId: new Map(),
+      reasoningTextByItemId: new Map(),
+      agentMessageTextByItemId: new Map(),
       resolved: false,
       onToolRequest: args.onToolRequest,
       onApprovalRequest: args.onApprovalRequest,
@@ -1091,14 +1160,14 @@ export class CodexAppServerManager {
       await this.startSession({
         chatId,
         cwd: args.cwd,
-        model: args.model ?? "deepseek-v4-flash",
+        model: args.model ?? "gpt-5.4-mini",
         serviceTier: args.serviceTier ?? "fast",
         sessionToken: null,
       })
 
       turn = await this.startTurn({
         chatId,
-        model: args.model ?? "deepseek-v4-flash",
+        model: args.model ?? "gpt-5.4-mini",
         effort: args.effort,
         serviceTier: args.serviceTier ?? "fast",
         content: args.prompt,
@@ -1388,6 +1457,13 @@ export class CodexAppServerManager {
       case "item/completed":
         this.handleItemCompleted(pendingTurn, notification.params)
         return
+      case "item/agentMessage/delta":
+        this.handleAgentMessageDelta(pendingTurn, notification.params)
+        return
+      case "item/reasoning/summaryTextDelta":
+      case "item/reasoning/textDelta":
+        this.handleReasoningDelta(pendingTurn, notification.params)
+        return
       case "item/plan/delta":
         this.handlePlanDelta(pendingTurn, notification.params)
         return
@@ -1412,8 +1488,7 @@ export class CodexAppServerManager {
       return
     }
 
-    // 推理开始：先推一个空的思考条目（前端渲染成「思考中…」），让用户在
-    // DeepSeek V4 长时间推理时不会只盯着 Running 干等；completed 时再补全文。
+    // Push an empty card immediately so long reasoning turns still have feedback.
     if (notification.item.type === "reasoning") {
       if (!pendingTurn.reasoningMessageId) {
         pendingTurn.reasoningMessageId = `reasoning-${notification.item.id}`
@@ -1429,11 +1504,11 @@ export class CodexAppServerManager {
       return
     }
 
-    // agentMessage 的 start 可能带部分正文：先推出来，completed 只推增量。
+    // Some app-server versions include an initial text snapshot on item/started.
     if (notification.item.type === "agentMessage") {
       const text = notification.item.text
       if (text.trim()) {
-        pendingTurn.agentMessageStartedTextByItemId.set(notification.item.id, text)
+        pendingTurn.agentMessageTextByItemId.set(notification.item.id, text)
         pendingTurn.queue.push({
           type: "transcript",
           entry: timestamped({
@@ -1474,10 +1549,10 @@ export class CodexAppServerManager {
 
   private handleItemCompleted(pendingTurn: PendingTurn, notification: ItemCompletedNotification) {
     if (notification.item.type === "agentMessage") {
-      const started = pendingTurn.agentMessageStartedTextByItemId.get(notification.item.id) ?? ""
+      const emitted = pendingTurn.agentMessageTextByItemId.get(notification.item.id) ?? ""
       const full = notification.item.text
-      // start 推过部分文本时只补增量；start 为空或内容被整体重写时推全文。
-      const delta = started && full.startsWith(started) ? full.slice(started.length) : full
+      // Completed carries the full snapshot. Only append its unseen suffix.
+      const delta = full.startsWith(emitted) ? full.slice(emitted.length) : emitted ? "" : full
       if (delta.trim()) {
         pendingTurn.queue.push({
           type: "transcript",
@@ -1488,7 +1563,7 @@ export class CodexAppServerManager {
           }),
         })
       }
-      pendingTurn.agentMessageStartedTextByItemId.delete(notification.item.id)
+      pendingTurn.agentMessageTextByItemId.delete(notification.item.id)
       if (pendingTurn.pendingWebSearchResultToolId && full.trim()) {
         pendingTurn.queue.push({
           type: "transcript",
@@ -1503,24 +1578,26 @@ export class CodexAppServerManager {
       return
     }
 
-    // 推理结束：把完整思考文本补到同一个 messageId 上，和 start 的空条目
-    // 合并成一条「思考过程」卡片（客户端按 messageId 合并）。
+    // Completed also carries a full snapshot; do not duplicate streamed deltas.
     if (notification.item.type === "reasoning") {
       const messageId = pendingTurn.reasoningMessageId ?? `reasoning-${notification.item.id}`
       if (!pendingTurn.reasoningMessageId) {
         pendingTurn.reasoningMessageId = messageId
       }
       const text = extractReasoningText(notification.item)
-      if (text.trim()) {
+      const emitted = pendingTurn.reasoningTextByItemId.get(notification.item.id) ?? ""
+      const delta = text.startsWith(emitted) ? text.slice(emitted.length) : emitted ? "" : text
+      if (delta.trim()) {
         pendingTurn.queue.push({
           type: "transcript",
           entry: timestamped({
             kind: "thinking",
             messageId,
-            text,
+            text: delta,
           }),
         })
       }
+      pendingTurn.reasoningTextByItemId.delete(notification.item.id)
       return
     }
 
@@ -1553,6 +1630,43 @@ export class CodexAppServerManager {
         pendingTurn.pendingWebSearchResultToolId = notification.item.id
       }
     }
+  }
+
+  private handleAgentMessageDelta(
+    pendingTurn: PendingTurn,
+    notification: AgentMessageDeltaNotification,
+  ) {
+    if (!notification.delta) return
+    const current = pendingTurn.agentMessageTextByItemId.get(notification.itemId) ?? ""
+    pendingTurn.agentMessageTextByItemId.set(notification.itemId, current + notification.delta)
+    pendingTurn.queue.push({
+      type: "transcript",
+      entry: timestamped({
+        kind: "assistant_text",
+        messageId: notification.itemId,
+        text: notification.delta,
+      }),
+    })
+  }
+
+  private handleReasoningDelta(
+    pendingTurn: PendingTurn,
+    notification: ReasoningSummaryTextDeltaNotification | ReasoningTextDeltaNotification,
+  ) {
+    if (!notification.delta) return
+    if (!pendingTurn.reasoningMessageId) {
+      pendingTurn.reasoningMessageId = `reasoning-${notification.itemId}`
+    }
+    const current = pendingTurn.reasoningTextByItemId.get(notification.itemId) ?? ""
+    pendingTurn.reasoningTextByItemId.set(notification.itemId, current + notification.delta)
+    pendingTurn.queue.push({
+      type: "transcript",
+      entry: timestamped({
+        kind: "thinking",
+        messageId: pendingTurn.reasoningMessageId,
+        text: notification.delta,
+      }),
+    })
   }
 
   private handlePlanUpdated(pendingTurn: PendingTurn, notification: TurnPlanUpdatedNotification) {

@@ -202,15 +202,22 @@ export const DEEPSEEK_PROVIDER: AgentProvider = "deepseek"
  * （需 Bearer API Key）会返回 `balance_infos`。优先走配置的兼容端点，
  * 失败时回退官方地址；不可用时返回 available:false + error 原因。
  */
-export async function fetchDeepSeekBalance(): Promise<DeepSeekBalanceSnapshot> {
-  const apiKey = resolveDeepSeekApiKey()
+export interface DeepSeekBalanceCredentials {
+  apiKey: string
+  baseUrl: string
+}
+
+export async function fetchDeepSeekBalance(
+  credentials?: DeepSeekBalanceCredentials,
+): Promise<DeepSeekBalanceSnapshot> {
+  const apiKey = credentials?.apiKey.trim() || resolveDeepSeekApiKey()
   const fetchedAt = new Date().toISOString()
   if (!apiKey) {
     return { available: false, fetchedAt, error: "missing_key" }
   }
 
   const baseUrls = [
-    DEEPSEEK_BASE_URL.replace(/\/+$/, ""),
+    (credentials?.baseUrl || DEEPSEEK_BASE_URL).replace(/\/+$/, ""),
     "https://api.deepseek.com",
   ].filter((url, index, all) => all.indexOf(url) === index)
 

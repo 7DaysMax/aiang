@@ -1,8 +1,8 @@
 import { useMemo } from "react"
 import { ToolCallMessage } from "./ToolCallMessage"
 import { useToolPayloadPrefetch } from "./tool-payload-context"
-import { Shimmer } from "../bui/atoms/Shimmer"
-import { DiffChips } from "../bui/DiffChips"
+import { Shimmer } from "@/components/atoms/Shimmer"
+import { LiveDiffChips } from "@/components/primitives/ToolChips"
 import { collectToolDiffChips } from "./toolChipPresentation"
 import type { ProcessedToolCall } from "./types"
 import type { HydratedTranscriptMessage } from "../../../shared/types"
@@ -80,7 +80,7 @@ export function CollapsedToolGroup({ messages, isLoading, localPath, expanded, o
                   />
                 ))}
               </div>
-              <DiffChips files={diffs} maxVisible={5} />
+              <LiveDiffChips files={diffs} maxVisible={5} />
               {messages.length > 5 ? (
                 <button
                   type="button"

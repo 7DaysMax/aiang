@@ -9,6 +9,7 @@ import {
   getIgnoreFolderEntryFromDiffPath,
   hasFileDragTypes,
   shouldUseMobileRightSidebarOverlay,
+  shouldUseRightSidebarOverlay,
   shouldAutoFollowTranscriptResize,
 } from "./ChatPage"
 
@@ -58,6 +59,14 @@ describe("shouldUseMobileRightSidebarOverlay", () => {
   test("keeps the desktop split layout at and above the breakpoint", () => {
     expect(shouldUseMobileRightSidebarOverlay(768)).toBe(false)
     expect(shouldUseMobileRightSidebarOverlay(1280)).toBe(false)
+  })
+})
+
+describe("shouldUseRightSidebarOverlay", () => {
+  test("uses an overlay on laptop-width layouts so the panel stays reachable", () => {
+    expect(shouldUseRightSidebarOverlay(1280)).toBe(true)
+    expect(shouldUseRightSidebarOverlay(1399)).toBe(true)
+    expect(shouldUseRightSidebarOverlay(1400)).toBe(false)
   })
 })
 

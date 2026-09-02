@@ -1,0 +1,63 @@
+{
+  "source": "https://www.aicss.dev/#components",
+  "tokens": {
+    "spacing": {
+      "scale": [4, 5, 6, 7, 8, 9, 10, 12, 14, 24, 28],
+      "base_unit": 1
+    },
+    "typography": {
+      "families": ["Inter", "Geist Mono", "ui-monospace"],
+      "scale": [
+        { "role": "hero", "size": "72px", "weight": "500", "family": "Inter" },
+        { "role": "section-heading", "size": "16px", "weight": "500", "family": "Inter" },
+        { "role": "body", "size": "13px", "weight": "425", "family": "Inter" },
+        { "role": "control", "size": "12px", "weight": "425", "family": "Inter" },
+        { "role": "code", "size": "11px", "weight": "400", "family": "Geist Mono" }
+      ]
+    },
+    "colors": [
+      { "role": "background", "value": "#FFFFFF" },
+      { "role": "surface-subtle", "value": "#FAFAFA" },
+      { "role": "text-primary", "value": "#1A1A1A" },
+      { "role": "text-muted", "value": "#A1A1A1" },
+      { "role": "border", "value": "#E6E8EC" },
+      { "role": "success", "value": "#15A06A" }
+    ],
+    "radius": ["4px", "7px", "10px", "12px", "999px"],
+    "shadows": [
+      "0 0 0 0.5px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.05), 0 2px 4px rgba(0,0,0,0.02)"
+    ],
+    "image_ratios": [],
+    "grid": { "max_width": "1232px", "columns": 2, "gutter": "24px" }
+  },
+  "taste": [
+    {
+      "name": "Quiet surface, concentrated action",
+      "trigger": "When an agent interface needs many interactive states without feeling like a control panel",
+      "decision": "Chose a 95.5% white surface with #1A1A1A actions over persistent colored panels",
+      "reason": "People can follow the work itself while the next available action remains unmistakable",
+      "evidence": ["#FFFFFF occupies 95.5% of measured background area", "#1A1A1A is the dominant action color", "accent surfaces remain below 1%"]
+    },
+    {
+      "name": "Hairlines before containers",
+      "trigger": "When related controls need a boundary",
+      "decision": "Chose 0.5px rings and a three-layer low-opacity shadow over heavy borders or elevated cards",
+      "reason": "The boundary is discoverable at rest without competing with typed content",
+      "evidence": ["12px outer radius", "#E6E8EC hairlines", "0.08/0.05/0.02 black shadow layers"]
+    },
+    {
+      "name": "Utility typography over display variety",
+      "trigger": "When labels, code, metadata and conversation text share one dense surface",
+      "decision": "Chose Inter at 11–16px plus Geist Mono for code over a decorative display/body pairing",
+      "reason": "Users scan changing states faster when letterforms stay stable across roles",
+      "evidence": ["Inter appears on 848 sampled elements", "13px is the most frequent text size", "weight 425 is the dominant weight"]
+    },
+    {
+      "name": "Motion explains state",
+      "trigger": "When menus, chips and enhancement states enter or leave",
+      "decision": "Chose 150–360ms state transitions with cubic-bezier(0.22,1,0.36,1) over ambient decoration",
+      "reason": "Movement tells people what changed and where it went without adding persistent visual noise",
+      "evidence": ["menu transform animation 200ms", "chip animation 260ms", "height transition 360ms", "prefers-reduced-motion present"]
+    }
+  ]
+}

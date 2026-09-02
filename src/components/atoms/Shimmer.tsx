@@ -1,11 +1,8 @@
-import type { ReactNode } from "react"
-
-/** Shimmering label — signals the agent is processing. */
 export function Shimmer({
   children,
   className = "",
 }: {
-  children: ReactNode;
+  children: React.ReactNode;
   className?: string;
 }) {
   return (

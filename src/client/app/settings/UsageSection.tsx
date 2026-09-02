@@ -1,32 +1,115 @@
 import { useCallback, useEffect, useState } from "react"
 import { ChevronRight } from "lucide-react"
-import type { ProviderUsageSnapshot, UsageLimitWindow, UsageLimitsSnapshot } from "../../../shared/types"
-import { PROVIDERS } from "../../../shared/types"
+import type { AgentProvider, ProviderUsageSnapshot, UsageLimitWindow, UsageLimitsSnapshot } from "../../../shared/types"
+import { deriveModelLabel, PROVIDERS } from "../../../shared/types"
 import { PROVIDER_ICONS } from "../../components/chat-ui/ChatPreferenceControls"
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip"
 import { formatRelativeTime } from "../../lib/formatters"
 import { cn } from "../../lib/utils"
+import { useChatPreferencesStore } from "../../stores/chatPreferencesStore"
 import type { KannaState } from "../useKannaState"
 
 const MINUTE_MS = 60_000
-const HOUR_MS = 60 * MINUTE_MS
-const DAY_MS = 24 * HOUR_MS
 
-/** "in 40m" / "in 3h" / "in 2d" — future counterpart of formatRelativeTime. */
+/** “40 分钟后” / “3 小时后” / “2 天后”——formatRelativeTime 的未来时态版本。 */
 function formatUntil(isoTimestamp: string): string | null {
   const timestamp = Date.parse(isoTimestamp)
   if (!Number.isFinite(timestamp)) return null
   const delta = timestamp - Date.now()
-  if (delta <= 0) return "now"
-  if (delta < HOUR_MS) return `in ${Math.max(1, Math.round(delta / MINUTE_MS))}m`
-  if (delta < DAY_MS) return `in ${Math.round(delta / HOUR_MS)}h`
-  return `in ${Math.round(delta / DAY_MS)}d`
+  if (delta <= 0) return "现在"
+  const totalMinutes = Math.max(1, Math.ceil(delta / MINUTE_MS))
+  if (totalMinutes < 60) return `${totalMinutes}分钟后`
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  if (hours < 24) return `${hours}小时${minutes ? `${minutes}分钟` : ""}后`
+  const days = Math.floor(hours / 24)
+  const remainingHours = hours % 24
+  return `${days}天${remainingHours ? `${remainingHours}小时` : ""}后`
+}
+
+function formatResetTime(isoTimestamp: string): string | null {
+  const timestamp = Date.parse(isoTimestamp)
+  if (!Number.isFinite(timestamp)) return null
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(timestamp)
+}
+
+const USAGE_TEXT_ZH: Record<string, string> = {
+  "Could not read Claude usage.": "无法读取 Claude 用量，请检查登录状态后重试。",
+  "Plan limits are not available for this session (API key or non-subscription auth).":
+    "当前登录方式不提供订阅限额，请使用订阅账户登录。",
+  "No plan limit windows reported.": "Claude 暂未返回可用的订阅限额。",
+  "Could not read Codex usage.": "无法读取 Codex 用量，请检查登录状态后重试。",
+  "No rate-limit windows reported (sign in to Codex with a ChatGPT plan).":
+    "Codex 暂未返回用量限额，请使用 ChatGPT 订阅账户登录。",
+  "No rate-limit windows reported.": "Codex 暂未返回可用的用量限额。",
+  "Pi runs through the Model Registry (pay-per-token). No subscription limits to show.":
+    "Pi 通过模型注册表按 Token 计费，没有可展示的订阅限额。",
+  "Usage limits for Cursor are not available yet.": "Cursor 暂不支持读取用量限额。",
+  "Could not read DeepSeek balance.": "无法读取 DeepSeek 账户余额，请稍后重试。",
+  "No usage recorded yet.": "暂时还没有用量记录。",
+  "Usage limits are not available.": "暂时无法读取用量限额。",
+  "Extra usage": "额外用量",
+  Credits: "额度",
+  Unlimited: "不限量",
+  "Rolling window": "滚动周期",
+}
+
+function localizeUsageText(value: string): string {
+  return USAGE_TEXT_ZH[value] ?? value
+}
+
+function localizeWindowSuffix(value: string): string {
+  if (value === "General quota") return "通用额度"
+  const modelQuota = value.match(/^Model quota · (.+)$/)
+  if (modelQuota) {
+    // The surrounding card already says Codex; removing that repeated family
+    // word keeps the quota name readable at phone widths without changing it.
+    const model = modelQuota[1].replace(/^(GPT [\d.]+) Codex /, "$1 ")
+    return `${model} 专属额度`
+  }
+  if (value === "OAuth apps") return "OAuth 应用"
+  return value
+}
+
+function localizeWindowLabelParts(value: string): { period: string; scope: string | null } {
+  if (value === "Current session (5-hour)") return { period: "当前会话（5 小时）", scope: null }
+
+  const weekly = value.match(/^Weekly(?: · (.+))?$/)
+  if (weekly) return { period: "每周", scope: weekly[1] ? localizeWindowSuffix(weekly[1]) : null }
+
+  const duration = value.match(/^(\d+)-(minute|hour|day)(?: · (.+))?$/)
+  if (duration) {
+    const unit = duration[2] === "minute" ? "分钟" : duration[2] === "hour" ? "小时" : "天"
+    return {
+      period: `${duration[1]} ${unit}`,
+      scope: duration[3] ? localizeWindowSuffix(duration[3]) : null,
+    }
+  }
+
+  return { period: localizeUsageText(value), scope: null }
+}
+
+function localizeWindowLabel(value: string): string {
+  const { period, scope } = localizeWindowLabelParts(value)
+  return scope ? `${period} · ${scope}` : period
 }
 
 function formatPercent(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return "—"
   if (value > 0 && value < 1) return "<1%"
   return `${Math.round(value)}%`
+}
+
+function remainingPercent(usedPercent: number | null): number | null {
+  return usedPercent === null || !Number.isFinite(usedPercent)
+    ? null
+    : Math.max(0, Math.min(100, 100 - usedPercent))
 }
 
 /** The currency symbol for a code ("$"), or "" for codes Intl doesn't know. */
@@ -81,14 +164,14 @@ function creditsSummary(credits: NonNullable<ProviderUsageSnapshot["credits"]>):
   }
   if (credits.usedAmount != null) {
     const used = formatMoney(credits.usedAmount, credits.currency)
-    parts.push(credits.limitAmount != null ? `${used} of ${formatMoney(credits.limitAmount, credits.currency)} used` : `${used} used`)
+    parts.push(credits.limitAmount != null ? `已使用 ${used} / ${formatMoney(credits.limitAmount, credits.currency)}` : `已使用 ${used}`)
   }
-  if (credits.usedPercent != null) parts.push(`${formatPercent(credits.usedPercent)} used`)
+  if (credits.usedPercent != null) parts.push(`已使用 ${formatPercent(credits.usedPercent)}`)
   if (credits.detail) {
     // Codex reports its prepaid balance as a bare numeric string ("1000");
     // render it as a remaining count. Non-numeric details ("Unlimited") pass through.
     const numeric = /^\d+(\.\d+)?$/.test(credits.detail.trim()) ? Number(credits.detail) : null
-    parts.push(numeric !== null ? `${formatCompact(numeric)} credits remaining` : credits.detail)
+    parts.push(numeric !== null ? `剩余 ${formatCompact(numeric)} 点额度` : localizeUsageText(credits.detail))
   }
   return parts.length > 0 ? parts.join(" · ") : null
 }
@@ -107,9 +190,26 @@ function providerLabel(providerId: string): string {
 function accountScopeLabel(plan: string | null): string | null {
   if (!plan) return null
   const value = plan.toLowerCase()
-  if (/team|business|enterprise|edu/.test(value)) return "Enterprise"
-  if (/free|go|plus|pro|prolite|max/.test(value)) return "Personal"
+  if (/team|business|enterprise|edu/.test(value)) return "企业"
+  if (/free|go|plus|pro|prolite|max/.test(value)) return "个人"
   return null
+}
+
+function formatPlanLabel(plan: string | null): string | null {
+  if (!plan) return null
+  const labels: Record<string, string> = {
+    free: "Free",
+    go: "Go",
+    plus: "Plus",
+    pro: "Pro",
+    prolite: "Pro Lite",
+    max: "Max",
+    team: "Team",
+    business: "Business",
+    enterprise: "Enterprise",
+    edu: "Edu",
+  }
+  return labels[plan.toLowerCase()] ?? plan
 }
 
 function barColorClass(usedPercent: number | null): string {
@@ -122,7 +222,14 @@ function barColorClass(usedPercent: number | null): string {
 function UsageBar({ usedPercent }: { usedPercent: number | null }) {
   const width = usedPercent === null ? 0 : Math.max(usedPercent > 0 ? 1.5 : 0, Math.min(100, usedPercent))
   return (
-    <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+    <div
+      className="h-2 w-full overflow-hidden rounded-full bg-muted"
+      role="progressbar"
+      aria-label={usedPercent === null ? "用量未知" : `已使用 ${formatPercent(usedPercent)}`}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={usedPercent ?? undefined}
+    >
       <div
         className={cn("h-full rounded-full transition-[width] duration-500 ease-out", barColorClass(usedPercent))}
         style={{ width: `${width}%` }}
@@ -132,7 +239,10 @@ function UsageBar({ usedPercent }: { usedPercent: number | null }) {
 }
 
 /** Shared grid so every window row lines up like a table (settings + empty state). */
-const WINDOW_ROW_GRID = "grid grid-cols-[minmax(0,1fr)_5rem_minmax(4rem,1.4fr)_2.375rem] items-center gap-3"
+const WINDOW_ROW_GRID = cn(
+  "grid grid-cols-[minmax(0,1.65fr)_minmax(3rem,1fr)_4.75rem] items-center gap-3",
+  "md:grid-cols-[minmax(0,1fr)_5.75rem_minmax(4rem,1.4fr)_4.75rem]",
+)
 
 /**
  * Same grid for a collapsed card's header, minus the reset column on narrow
@@ -140,19 +250,36 @@ const WINDOW_ROW_GRID = "grid grid-cols-[minmax(0,1fr)_5rem_minmax(4rem,1.4fr)_2
  * reset time is one tap away in the expanded rows.
  */
 const COLLAPSED_HEADER_GRID = cn(
-  "grid grid-cols-[minmax(0,1fr)_minmax(4rem,1.4fr)_2.375rem] items-center gap-3",
-  "md:grid-cols-[minmax(0,1fr)_5rem_minmax(4rem,1.4fr)_2.375rem]",
+  "grid grid-cols-[minmax(0,1fr)_minmax(4rem,1.4fr)_4.75rem] items-center gap-3",
+  "md:grid-cols-[minmax(0,1fr)_5.75rem_minmax(4rem,1.4fr)_4.75rem]",
 )
 
 function WindowRow({ window }: { window: UsageLimitWindow }) {
   const resets = window.resetsAt ? formatUntil(window.resetsAt) : null
+  const resetTime = window.resetsAt ? formatResetTime(window.resetsAt) : null
+  const remaining = remainingPercent(window.usedPercent)
+  const label = localizeWindowLabelParts(window.label)
   return (
     <div className={WINDOW_ROW_GRID}>
-      <div className="min-w-0 truncate text-sm text-foreground">{window.label}</div>
-      <div className="truncate text-xs text-muted-foreground">{resets ? `Resets ${resets}` : ""}</div>
+      <div className="min-w-0">
+        <div className="truncate text-sm text-foreground">{label.period}</div>
+        {label.scope ? (
+          <div className="text-[11px] leading-4 text-muted-foreground md:truncate" title={label.scope}>{label.scope}</div>
+        ) : null}
+        {resets ? <div className="truncate text-[10px] text-muted-foreground md:hidden">{resets}重置</div> : null}
+      </div>
+      {resets ? (
+        <Tooltip delayDuration={0}>
+          <TooltipTrigger asChild>
+            <span className="hidden truncate text-xs text-muted-foreground md:block">{resets}重置</span>
+          </TooltipTrigger>
+          <TooltipContent side="top" align="center">重置时间：{resetTime}</TooltipContent>
+        </Tooltip>
+      ) : <div className="hidden md:block" />}
       <UsageBar usedPercent={window.usedPercent} />
-      <div className="text-right text-sm font-medium tabular-nums text-foreground">
-        {formatPercent(window.usedPercent)}
+      <div className="flex flex-col items-end text-right tabular-nums">
+        <span className="text-xs font-medium text-foreground">已用 {formatPercent(window.usedPercent)}</span>
+        <span className="text-[10px] text-muted-foreground">剩余 {formatPercent(remaining)}</span>
       </div>
     </div>
   )
@@ -160,11 +287,14 @@ function WindowRow({ window }: { window: UsageLimitWindow }) {
 
 export function ProviderCard({
   snapshot,
+  activeModel,
   collapsible = false,
   refreshing = false,
   onRefresh,
 }: {
   snapshot: ProviderUsageSnapshot
+  /** The model selected in provider settings; separate from model-specific quota buckets. */
+  activeModel?: string | null
   /** When true, the card starts collapsed and the header toggles it open/closed. */
   collapsible?: boolean
   /** Show "Refreshing…" in the header's timestamp slot while a read is in flight. */
@@ -177,16 +307,16 @@ export function ProviderCard({
   onRefresh?: () => void
 }) {
   const Icon = PROVIDER_ICONS[snapshot.provider]
-  const hasContent = snapshot.windows.length > 0 || snapshot.credits
+  const hasContent = snapshot.windows.length > 0 || snapshot.credits || Boolean(activeModel)
   const [expanded, setExpanded] = useState(false)
   const showBody = !collapsible || expanded
 
   const timestampText = refreshing
-    ? "Refreshing…"
+    ? "刷新中…"
     : snapshot.updatedAt
-      ? `Updated ${formatRelativeTime(snapshot.updatedAt)}`
+      ? `${formatRelativeTime(snapshot.updatedAt) || "刚刚"}${snapshot.status === "ok" ? "更新" : "检查"}`
       : onRefresh
-        ? "Refresh"
+        ? "刷新"
         : null
 
   // The timestamp doubles as the refresh control on non-collapsible cards
@@ -214,7 +344,7 @@ export function ProviderCard({
 
   // Scope and plan share one pill ("Personal Pro"); `capitalize` title-cases the
   // raw plan string ("max" → "Max").
-  const planBadgeText = [accountScopeLabel(snapshot.plan), snapshot.plan].filter(Boolean).join(" ")
+  const planBadgeText = [accountScopeLabel(snapshot.plan), formatPlanLabel(snapshot.plan)].filter(Boolean).join(" ")
 
   const identity = (
     <div className="flex min-w-0 items-center gap-2.5">
@@ -237,7 +367,7 @@ export function ProviderCard({
         {providerLabel(snapshot.provider)}
       </span>
       {planBadgeText ? (
-        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[11px] capitalize text-muted-foreground">
+        <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground">
           {planBadgeText}
         </span>
       ) : null}
@@ -260,7 +390,7 @@ export function ProviderCard({
     <div className={COLLAPSED_HEADER_GRID}>
       {identity}
       <div className="hidden truncate text-xs text-muted-foreground md:block">
-        {summaryResets ? `Resets ${summaryResets}` : ""}
+        {summaryResets ? `${summaryResets}重置` : ""}
       </div>
       {summaryWindow ? (
         <Tooltip delayDuration={0}>
@@ -272,7 +402,7 @@ export function ProviderCard({
             </div>
           </TooltipTrigger>
           <TooltipContent side="top" align="center">
-            <div>{summaryWindow.label}</div>
+            <div>{localizeWindowLabel(summaryWindow.label)}</div>
             {timestampText ? <div className="text-muted-foreground">{timestampText}</div> : null}
           </TooltipContent>
         </Tooltip>
@@ -280,7 +410,7 @@ export function ProviderCard({
         <div />
       )}
       <div className="text-right text-sm font-medium tabular-nums text-foreground">
-        {summaryWindow ? formatPercent(summaryWindow.usedPercent) : ""}
+        {summaryWindow ? `剩余 ${formatPercent(remainingPercent(summaryWindow.usedPercent))}` : ""}
       </div>
     </div>
   )
@@ -288,23 +418,34 @@ export function ProviderCard({
   const body = showBody ? (
     hasContent ? (
       <div className="mt-4 space-y-2.5">
+        {activeModel ? (
+          <div className="flex items-baseline justify-between gap-3 border-b border-border pb-3">
+            <span className="text-xs text-muted-foreground">当前模型</span>
+            <span className="truncate text-sm font-medium text-foreground" title={activeModel}>
+              {deriveModelLabel(activeModel)}
+            </span>
+          </div>
+        ) : null}
         {snapshot.windows.map((window) => (
           <WindowRow key={window.id} window={window} />
         ))}
         {snapshot.credits ? (
           <div className="flex items-baseline justify-between gap-3 border-t border-border pt-3 text-sm">
-            <span className="text-foreground">{snapshot.credits.label}</span>
+            <span className="text-foreground">{localizeUsageText(snapshot.credits.label)}</span>
             <span className="text-muted-foreground">{creditsSummary(snapshot.credits)}</span>
           </div>
         ) : null}
         {snapshot.detail ? (
-          <div className="text-xs text-muted-foreground">{snapshot.detail}</div>
+          <div className="text-xs text-muted-foreground">{localizeUsageText(snapshot.detail)}</div>
         ) : null}
       </div>
     ) : (
       <div className="mt-3 text-sm text-muted-foreground">
         {snapshot.detail
-          ?? (snapshot.status === "unknown" ? "No usage recorded yet." : "Usage limits are not available.")}
+          ? localizeUsageText(snapshot.detail)
+          : snapshot.status === "unknown"
+            ? "暂时还没有用量记录。"
+            : "暂时无法读取用量限额。"}
       </div>
     )
   ) : null
@@ -340,8 +481,9 @@ const USAGE_POLL_MS = 60_000
 
 export function UsageSection({ state }: { state: Pick<KannaState, "socket"> }) {
   const socket = state.socket
+  const codexModel = useChatPreferencesStore((store) => store.providerDefaults.codex.model)
   const [snapshot, setSnapshot] = useState<UsageLimitsSnapshot | null>(null)
-  const [refreshing, setRefreshing] = useState(true)
+  const [refreshingProvider, setRefreshingProvider] = useState<AgentProvider | "all" | null>("all")
 
   // Live subscription: the immediate push shows cached/stale data right away,
   // and turn-pushed updates land here while the view is open.
@@ -350,15 +492,15 @@ export function UsageSection({ state }: { state: Pick<KannaState, "socket"> }) {
   }, [socket])
 
   const runRefresh = useCallback(
-    async (force: boolean) => {
-      setRefreshing(true)
+    async (force: boolean, provider?: AgentProvider) => {
+      setRefreshingProvider(provider ?? "all")
       try {
-        const result = await socket.command<UsageLimitsSnapshot>({ type: "usage.refresh", force })
+        const result = await socket.command<UsageLimitsSnapshot>({ type: "usage.refresh", force, provider })
         if (result && Array.isArray(result.providers)) setSnapshot(result)
       } catch {
         // Errors surface as "unavailable" provider states in the snapshot.
       } finally {
-        setRefreshing(false)
+        setRefreshingProvider(null)
       }
     },
     [socket],
@@ -382,19 +524,22 @@ export function UsageSection({ state }: { state: Pick<KannaState, "socket"> }) {
       {snapshot ? (
         // Always render whatever we have (cached/stale) — the poll swaps in
         // fresh numbers when they land; the header "Updated …" is the control.
-        snapshot.providers.filter((provider) => provider.provider === "deepseek").map((provider) => (
+        snapshot.providers.map((provider) => (
           <ProviderCard
             key={provider.provider}
             snapshot={provider}
-            refreshing={refreshing}
-            onRefresh={() => {
-              if (!refreshing) void runRefresh(true)
-            }}
+            activeModel={provider.provider === "codex" ? codexModel : undefined}
+            refreshing={refreshingProvider === "all" || refreshingProvider === provider.provider}
+            onRefresh={provider.provider === "deepseek" || provider.provider === "claude" || provider.provider === "codex"
+              ? () => {
+                if (refreshingProvider === null) void runRefresh(true, provider.provider)
+              }
+              : undefined}
           />
         ))
       ) : (
         <div className="rounded-2xl border border-border bg-card/40 px-5 py-6 text-sm text-muted-foreground">
-          Loading usage…
+          正在加载用量…
         </div>
       )}
     </div>

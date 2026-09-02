@@ -9,7 +9,7 @@ describe("ChatPreferenceControls", () => {
       <ChatPreferenceControls
         availableProviders={PROVIDERS}
         selectedProvider="codex"
-        model="deepseek-v4-flash"
+        model="gpt-5.6-sol"
         modelOptions={{ reasoningEffort: "high", fastMode: true }}
         onProviderChange={() => {}}
         onModelChange={() => {}}
@@ -19,10 +19,9 @@ describe("ChatPreferenceControls", () => {
     )
 
     expect(html).toContain("Codex")
-    expect(html).toContain("DeepSeek Flash")
+    expect(html).toContain("GPT-5.6-Sol")
     expect(html).toContain("High")
-    // DeepSeek V4 无 fast mode：即使传了 fastMode 也不渲染快速模式开关。
-    expect(html).not.toContain("快速模式")
+    expect(html).toContain("快速模式")
     expect(html).not.toContain("Plan Mode")
   })
 
@@ -31,8 +30,8 @@ describe("ChatPreferenceControls", () => {
       <ChatPreferenceControls
         availableProviders={PROVIDERS}
         selectedProvider="codex"
-        model="deepseek-v4-pro"
-        modelOptions={{ reasoningEffort: "max", fastMode: false }}
+        model="gpt-5.3-codex-spark"
+        modelOptions={{ reasoningEffort: "xhigh", fastMode: false }}
         onProviderChange={() => {}}
         onModelChange={() => {}}
         onModelOptionChange={() => {}}
@@ -40,7 +39,7 @@ describe("ChatPreferenceControls", () => {
       />
     )
 
-    expect(html).toContain("DeepSeek Pro")
+    expect(html).toContain("GPT-5.3-Codex-Spark")
     expect(html).not.toContain("快速模式")
   })
 
@@ -49,7 +48,7 @@ describe("ChatPreferenceControls", () => {
       <ChatPreferenceControls
         availableProviders={PROVIDERS}
         selectedProvider="codex"
-        model="deepseek-v4-pro"
+        model="gpt-5.6-luna"
         modelOptions={{ reasoningEffort: "max", fastMode: false }}
         onProviderChange={() => {}}
         onModelChange={() => {}}
@@ -58,7 +57,7 @@ describe("ChatPreferenceControls", () => {
       />
     )
 
-    expect(html).toContain("DeepSeek Pro")
+    expect(html).toContain("GPT-5.6-Luna")
     expect(html).toContain("Max")
   })
 

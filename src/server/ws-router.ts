@@ -981,7 +981,7 @@ export function createWsRouter({
           if (usageLimits) {
             // Auto-refresh (page/palette open) respects the read TTL; the
             // manual Refresh button forces past it.
-            await usageLimits.refresh({ force: command.force ?? false })
+            await usageLimits.refresh({ force: command.force ?? false, provider: command.provider })
             send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: usageLimits.getSnapshot() })
           } else {
             send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: { providers: [] } satisfies UsageLimitsSnapshot })

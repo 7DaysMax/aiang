@@ -16,6 +16,7 @@ import {
 } from "../shared/model-profile"
 import {
   DEFAULT_NEW_PROJECTS_DIRECTORY,
+  DEFAULT_BEAUTIFUL_UI_PREFERENCES,
   type AppSettingsPatch,
   type AppSettingsSnapshot,
   type AppThemePreference,
@@ -24,6 +25,7 @@ import {
   type DefaultProviderPreference,
   type EditorPreset,
   type VisionServiceSettings,
+  type BeautifulUiPreferences,
 } from "../shared/types"
 
 interface AppSettingsFile {
@@ -42,6 +44,13 @@ interface AppSettingsFile {
   editor?: {
     preset?: unknown
     commandTemplate?: unknown
+  }
+  beautifulUi?: {
+    loading?: unknown
+    thinking?: unknown
+    taskRows?: unknown
+    promptBar?: unknown
+    codeBlock?: unknown
   }
   defaultProvider?: unknown
   providerDefaults?: {
@@ -181,6 +190,23 @@ function normalizeDockMetrics(value: unknown): AppSettingsSnapshot["dockMetrics"
   }
 }
 
+function normalizeBeautifulUi(value: unknown): BeautifulUiPreferences {
+  const record = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+  return {
+    loading: record?.loading === "Dots" || record?.loading === "Orbit" || record?.loading === "Surfer"
+      ? record.loading
+      : DEFAULT_BEAUTIFUL_UI_PREFERENCES.loading,
+    thinking: record?.thinking === "Steps" || record?.thinking === "Search" || record?.thinking === "Coding"
+      ? record.thinking
+      : DEFAULT_BEAUTIFUL_UI_PREFERENCES.thinking,
+    taskRows: record?.taskRows === "Capsules" ? "Capsules" : DEFAULT_BEAUTIFUL_UI_PREFERENCES.taskRows,
+    promptBar: record?.promptBar === "Pill" ? "Pill" : DEFAULT_BEAUTIFUL_UI_PREFERENCES.promptBar,
+    codeBlock: record?.codeBlock === "Diff" ? "Diff" : DEFAULT_BEAUTIFUL_UI_PREFERENCES.codeBlock,
+  }
+}
+
 /** 识图服务默认值：千问 VL（DashScope 兼容模式），Key/模型留空由用户填写。 */
 const DEFAULT_VISION_SERVICE = {
   enabled: false,
@@ -214,6 +240,7 @@ function toFilePayload(state: AppSettingsState) {
     chatSoundId: state.chatSoundId,
     terminal: state.terminal,
     editor: state.editor,
+    beautifulUi: state.beautifulUi,
     defaultProvider: state.defaultProvider,
     providerDefaults: state.providerDefaults,
     newSidebarEnabled: state.newSidebarEnabled,
@@ -242,6 +269,7 @@ function toSnapshot(state: AppSettingsState, devbox = false): AppSettingsSnapsho
     chatSoundId: state.chatSoundId,
     terminal: state.terminal,
     editor: state.editor,
+    beautifulUi: state.beautifulUi,
     defaultProvider: state.defaultProvider,
     providerDefaults: state.providerDefaults,
     newSidebarEnabled: state.newSidebarEnabled,
@@ -360,6 +388,7 @@ function normalizeAppSettings(
       preset: editorPreset,
       commandTemplate: normalizeEditorCommandTemplate(source?.editor?.commandTemplate, editorPreset),
     },
+    beautifulUi: normalizeBeautifulUi(source?.beautifulUi),
     defaultProvider: normalizeDefaultProvider(source?.defaultProvider),
     providerDefaults: normalizeProviderDefaults(source?.providerDefaults),
     newSidebarEnabled,
@@ -403,6 +432,7 @@ function toComparablePayload(source: AppSettingsFile) {
     chatSoundId: source.chatSoundId,
     terminal: source.terminal,
     editor: source.editor,
+    beautifulUi: source.beautifulUi,
     defaultProvider: source.defaultProvider,
     providerDefaults: source.providerDefaults,
     newSidebarEnabled: source.newSidebarEnabled,
@@ -433,6 +463,10 @@ function applyPatch(state: AppSettingsState, patch: AppSettingsPatch): AppSettin
     editor: {
       ...state.editor,
       ...patch.editor,
+    },
+    beautifulUi: {
+      ...state.beautifulUi,
+      ...patch.beautifulUi,
     },
     providerDefaults: mergeProviderDefaultsPatch(state.providerDefaults, patch.providerDefaults),
     dockMetrics: {

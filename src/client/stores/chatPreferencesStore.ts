@@ -12,7 +12,11 @@ import {
   type ProviderPreference,
   type ProviderModelOptionsByProvider,
 } from "../../shared/types"
-import { CHAT_COLLABORATION_STORAGE_KEY } from "../lib/storageKeys"
+import {
+  CHAT_COLLABORATION_STORAGE_KEY,
+  CHAT_IMPLEMENTATION_PROVIDER_STORAGE_KEY,
+  CHAT_REVIEW_PROVIDER_STORAGE_KEY,
+} from "../lib/storageKeys"
 import {
   createDefaultProviderDefaults,
   normalizeClaudePreference,
@@ -116,6 +120,41 @@ function withCollaborationValue(
   if (!(chatId in current)) return null
   const { [chatId]: _removed, ...rest } = current
   return rest
+}
+
+function readProviderByChatId(storageKey: string): Record<string, AgentProvider> {
+  try {
+    if (typeof localStorage === "undefined") return {}
+    const raw = localStorage.getItem(storageKey)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {}
+    const next: Record<string, AgentProvider> = {}
+    for (const [chatId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === "string" && value.length > 0) next[chatId] = value as AgentProvider
+    }
+    return next
+  } catch {
+    return {}
+  }
+}
+
+function writeProviderByChatId(storageKey: string, value: Record<string, AgentProvider>) {
+  try {
+    if (typeof localStorage === "undefined") return
+    localStorage.setItem(storageKey, JSON.stringify(value))
+  } catch {
+    // quota / private mode — keep the in-memory map either way
+  }
+}
+
+function withProviderValue(
+  current: Record<string, AgentProvider>,
+  chatId: string,
+  provider: AgentProvider,
+): Record<string, AgentProvider> {
+  if (current[chatId] === provider) return current
+  return { ...current, [chatId]: provider }
 }
 
 function logChatPreferences(message: string, details?: unknown) {
@@ -257,6 +296,10 @@ interface ChatPreferencesState {
    * Cursor 引擎即使这里为 true 也不会发出 collaboration 标志。
    */
   collaborationByChatId: Record<string, boolean>
+  /** Per-chat 协作实现引擎（谁动手）。缺省 = 主引擎。 */
+  implementationProviderByChatId: Record<string, AgentProvider>
+  /** Per-chat 协作验收引擎（谁验收）。缺省 = 主引擎。 */
+  reviewProviderByChatId: Record<string, AgentProvider>
   legacyComposerState: ComposerState | null
   setDefaultProvider: (provider: DefaultProviderPreference) => void
   syncProviderDefaults: (defaultProvider: DefaultProviderPreference, providerDefaults: ChatProviderPreferences) => void
@@ -270,6 +313,12 @@ interface ChatPreferencesState {
   getChatCollaboration: (chatId: string) => boolean
   setChatCollaboration: (chatId: string, enabled: boolean) => void
   copyChatCollaboration: (fromChatId: string, toChatId: string) => void
+  getChatImplementationProvider: (chatId: string) => AgentProvider | null
+  setChatImplementationProvider: (chatId: string, provider: AgentProvider) => void
+  clearChatImplementationProvider: (chatId: string) => void
+  getChatReviewProvider: (chatId: string) => AgentProvider | null
+  setChatReviewProvider: (chatId: string, provider: AgentProvider) => void
+  clearChatReviewProvider: (chatId: string) => void
   initializeComposerForChat: (chatId: string, options?: { sourceState?: ComposerState | null; sourceChatId?: string }) => void
   setComposerState: (chatId: string, composerState: ComposerState) => void
   setChatComposerProvider: (chatId: string, provider: AgentProvider) => void
@@ -322,6 +371,8 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
     chatStates: {},
     pendingProviderSwitches: {},
     collaborationByChatId: readCollaborationByChatId(),
+    implementationProviderByChatId: readProviderByChatId(CHAT_IMPLEMENTATION_PROVIDER_STORAGE_KEY),
+    reviewProviderByChatId: readProviderByChatId(CHAT_REVIEW_PROVIDER_STORAGE_KEY),
     legacyComposerState: null,
     setDefaultProvider: (defaultProvider) => set({ defaultProvider }),
     syncProviderDefaults: (defaultProvider, providerDefaults) =>
@@ -390,14 +441,63 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
         }),
       copyChatCollaboration: (fromChatId, toChatId) =>
         set((state) => {
-          const next = withCollaborationValue(
+          const collaborationByChatId = withCollaborationValue(
             state.collaborationByChatId,
             toChatId,
             Boolean(state.collaborationByChatId[fromChatId]),
-          )
-          if (!next) return state
-          writeCollaborationByChatId(next)
-          return { collaborationByChatId: next }
+          ) ?? state.collaborationByChatId
+          const implementationProvider = state.implementationProviderByChatId[fromChatId]
+          const implementationProviderByChatId = implementationProvider
+            ? withProviderValue(state.implementationProviderByChatId, toChatId, implementationProvider)
+            : state.implementationProviderByChatId
+          const reviewProvider = state.reviewProviderByChatId[fromChatId]
+          const reviewProviderByChatId = reviewProvider
+            ? withProviderValue(state.reviewProviderByChatId, toChatId, reviewProvider)
+            : state.reviewProviderByChatId
+
+          if (collaborationByChatId === state.collaborationByChatId
+            && implementationProviderByChatId === state.implementationProviderByChatId
+            && reviewProviderByChatId === state.reviewProviderByChatId) return state
+          if (collaborationByChatId !== state.collaborationByChatId) {
+            writeCollaborationByChatId(collaborationByChatId)
+          }
+          if (implementationProviderByChatId !== state.implementationProviderByChatId) {
+            writeProviderByChatId(CHAT_IMPLEMENTATION_PROVIDER_STORAGE_KEY, implementationProviderByChatId)
+          }
+          if (reviewProviderByChatId !== state.reviewProviderByChatId) {
+            writeProviderByChatId(CHAT_REVIEW_PROVIDER_STORAGE_KEY, reviewProviderByChatId)
+          }
+          return { collaborationByChatId, implementationProviderByChatId, reviewProviderByChatId }
+        }),
+      getChatImplementationProvider: (chatId) => get().implementationProviderByChatId[chatId] ?? null,
+      setChatImplementationProvider: (chatId, provider) =>
+        set((state) => {
+          const next = withProviderValue(state.implementationProviderByChatId, chatId, provider)
+          if (next === state.implementationProviderByChatId) return state
+          writeProviderByChatId(CHAT_IMPLEMENTATION_PROVIDER_STORAGE_KEY, next)
+          return { implementationProviderByChatId: next }
+        }),
+      clearChatImplementationProvider: (chatId) =>
+        set((state) => {
+          if (!(chatId in state.implementationProviderByChatId)) return state
+          const { [chatId]: _removed, ...rest } = state.implementationProviderByChatId
+          writeProviderByChatId(CHAT_IMPLEMENTATION_PROVIDER_STORAGE_KEY, rest)
+          return { implementationProviderByChatId: rest }
+        }),
+      getChatReviewProvider: (chatId) => get().reviewProviderByChatId[chatId] ?? null,
+      setChatReviewProvider: (chatId, provider) =>
+        set((state) => {
+          const next = withProviderValue(state.reviewProviderByChatId, chatId, provider)
+          if (next === state.reviewProviderByChatId) return state
+          writeProviderByChatId(CHAT_REVIEW_PROVIDER_STORAGE_KEY, next)
+          return { reviewProviderByChatId: next }
+        }),
+      clearChatReviewProvider: (chatId) =>
+        set((state) => {
+          if (!(chatId in state.reviewProviderByChatId)) return state
+          const { [chatId]: _removed, ...rest } = state.reviewProviderByChatId
+          writeProviderByChatId(CHAT_REVIEW_PROVIDER_STORAGE_KEY, rest)
+          return { reviewProviderByChatId: rest }
         }),
       initializeComposerForChat: (chatId, options) =>
         set((state) => {
@@ -426,12 +526,36 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
             writeCollaborationByChatId(collaborationByChatId)
           }
 
+          // 分支/新对话从源对话继承实现引擎。
+          const sourceImplementationProvider = sourceChatId
+            ? (state.implementationProviderByChatId[sourceChatId] ?? null)
+            : null
+          const implementationProviderByChatId = sourceImplementationProvider
+            ? withProviderValue(state.implementationProviderByChatId, chatId, sourceImplementationProvider)
+            : state.implementationProviderByChatId
+          if (implementationProviderByChatId !== state.implementationProviderByChatId) {
+            writeProviderByChatId(CHAT_IMPLEMENTATION_PROVIDER_STORAGE_KEY, implementationProviderByChatId)
+          }
+
+          // 分支/新对话从源对话继承验收引擎。
+          const sourceReviewProvider = sourceChatId
+            ? (state.reviewProviderByChatId[sourceChatId] ?? null)
+            : null
+          const reviewProviderByChatId = sourceReviewProvider
+            ? withProviderValue(state.reviewProviderByChatId, chatId, sourceReviewProvider)
+            : state.reviewProviderByChatId
+          if (reviewProviderByChatId !== state.reviewProviderByChatId) {
+            writeProviderByChatId(CHAT_REVIEW_PROVIDER_STORAGE_KEY, reviewProviderByChatId)
+          }
+
           return {
             chatStates: {
               ...state.chatStates,
               [chatId]: composerState,
             },
             collaborationByChatId,
+            implementationProviderByChatId,
+            reviewProviderByChatId,
           }
         }),
       setComposerState: (chatId, composerState) =>

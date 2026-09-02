@@ -121,6 +121,32 @@ describe("fetchDeepSeekBalance", () => {
     expect(balance.toppedUpBalance).toBe("4.55")
   })
 
+  test("uses the active model profile credentials when provided", async () => {
+    delete process.env.DEEPSEEK_API_KEY
+    let requestedUrl = ""
+    let authorization = ""
+    globalThis.fetch = Object.assign(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        requestedUrl = String(input)
+        authorization = new Headers(init?.headers).get("authorization") ?? ""
+        return new Response(JSON.stringify({
+          is_available: true,
+          balance_infos: [{ currency: "CNY", total_balance: "8.88" }],
+        }), { status: 200 })
+      },
+      { preconnect: originalFetch.preconnect?.bind(originalFetch) ?? (async () => {}) },
+    ) as typeof fetch
+
+    const balance = await fetchDeepSeekBalance({
+      apiKey: "sk-profile",
+      baseUrl: "https://profile.deepseek.example/",
+    })
+
+    expect(requestedUrl).toBe("https://profile.deepseek.example/user/balance")
+    expect(authorization).toBe("Bearer sk-profile")
+    expect(balance).toMatchObject({ available: true, totalBalance: "8.88" })
+  })
+
   test("reports unauthorized when the key is rejected", async () => {
     process.env.DEEPSEEK_API_KEY = "sk-bad"
     mockFetchOnce(new Response("unauthorized", { status: 401 }))

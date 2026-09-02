@@ -3,7 +3,7 @@ import { MessageCircleQuestion } from "lucide-react"
 import type { ProcessedToolCall, AskUserQuestionItem } from "./types"
 import type { AskUserQuestionAnswerMap } from "../../../shared/types"
 import { useTranscriptRenderOptions } from "./render-context"
-import { ApprovalCard } from "../bui/ApprovalCard"
+import ApprovalCard from "@/components/primitives/ApprovalCard"
 
 interface Props {
   message: Extract<ProcessedToolCall, { toolKind: "ask_user_question" }>

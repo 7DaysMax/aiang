@@ -23,6 +23,10 @@ export function mergeAppSettingsPatch(
       ...settings.editor,
       ...patch.editor,
     },
+    beautifulUi: {
+      ...settings.beautifulUi,
+      ...patch.beautifulUi,
+    },
     dockMetrics: {
       ...settings.dockMetrics,
       ...patch.dockMetrics,

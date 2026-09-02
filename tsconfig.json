@@ -21,7 +21,12 @@
     "types": [
       "bun"
     ],
-    "baseUrl": "."
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ]
+    }
   },
   "include": [
     "scripts/**/*.ts",

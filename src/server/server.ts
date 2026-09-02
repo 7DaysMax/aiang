@@ -22,6 +22,7 @@ import { AppSettingsManager } from "./app-settings"
 import { UsageLimitsManager } from "./usage-limits"
 import { resolveAppDistClientDir } from "./app-root"
 import { fetchDeepSeekBalance } from "./deepseek-agent"
+import { resolveModelRuntime } from "./model-profiles"
 import { DiffStore } from "./diff-store"
 import { WorktreeProbe } from "./worktree-probe"
 import { TurnFileTracker } from "./worktree-snapshot"
@@ -46,7 +47,6 @@ import { deleteProjectUpload, inferAttachmentContentType, inferProjectFileConten
 import {
   FILE_SIZE_HEADER,
   FILE_TRUNCATED_HEADER,
-  handleProjectCompile,
   handleProjectFileWrite,
   handleProjectTree,
   MAX_PROJECT_FILE_BYTES,
@@ -246,10 +246,16 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
       router.scheduleBroadcast()
     },
   })
+  const fetchCurrentDeepSeekBalance = () => {
+    const runtime = resolveModelRuntime()
+    return runtime.kind === "profile" && runtime.profile.presetId === "deepseek"
+      ? fetchDeepSeekBalance({ apiKey: runtime.apiKey, baseUrl: runtime.baseUrl })
+      : fetchDeepSeekBalance()
+  }
   const usageLimits = new UsageLimitsManager(path.join(store.dataDir, "usage-limits.json"), {
     fetchClaudeUsage: () => agent.fetchClaudeUsage(),
     fetchCodexRateLimits: () => agent.fetchCodexRateLimits(),
-    fetchDeepSeekBalance,
+    fetchDeepSeekBalance: fetchCurrentDeepSeekBalance,
   })
   await usageLimits.initialize()
   agent.setClaudeRateLimitListener((info) => usageLimits.recordClaudeRateLimitPush(info))
@@ -266,6 +272,9 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
       // A fresh sign-in unlocks usage limits (claude/codex empty-state cards
       // flip from auth → usage) and the live Cursor model catalog.
       void usageLimits.refresh({ force: true }).catch(() => undefined)
+      if (service === "codex") {
+        void agent.refreshCodexModelCatalog()
+      }
       if (service === "cursor") {
         void agent.refreshCursorModelCatalog()
       }
@@ -287,6 +296,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
     appSettings,
     analytics,
     usageLimits,
+    fetchDeepSeekBalanceImpl: fetchCurrentDeepSeekBalance,
     llmProvider: {
       read: readLlmProviderSnapshot,
       write: writeLlmProviderSnapshot,
@@ -298,8 +308,9 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
     updateManager,
     providerAuth,
   })
-  // Overlay the account's live Cursor model list on the static catalog
-  // (no-op when cursor-agent is missing or logged out); broadcasts on change.
+  // Overlay the native engines' live account model lists on their static
+  // fallbacks. Missing CLIs or signed-out accounts are quiet no-ops.
+  void agent.refreshCodexModelCatalog()
   void agent.refreshCursorModelCatalog()
   // Seed the pi provider's model picker from saved fave models before the
   // first snapshots go out.
@@ -596,11 +607,6 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
           const projectFileMethodResponse = await handleProjectFileMethodNotAllowed(url)
           if (projectFileMethodResponse) {
             return projectFileMethodResponse
-          }
-
-          const projectCompileResponse = await handleProjectCompile(req, url, store)
-          if (projectCompileResponse) {
-            return projectCompileResponse
           }
 
           const browserProxyResponse = await handleBrowserProxy(req, url)

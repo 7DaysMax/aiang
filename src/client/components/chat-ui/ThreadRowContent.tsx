@@ -20,32 +20,26 @@ function statusDotClass(archived: boolean) {
 
 /**
  * Status glyph mirroring the sidebar chat rows: spinner while running, a blue
- * ping when waiting on the user, a green ping when unread. Returns null for
- * idle chats so callers can fall back to a default icon — `uncommittedWork` is
- * carried by title contrast, not by this slot, so it only ever holds things
- * that want your attention.
+ * dot when waiting on the user, a green dot when unread. Deliberately still —
+ * no ping pulse: the pulse read as noise and fought the row's title contrast
+ * for attention; the dot + bolded title is enough to spot a row that wants
+ * you. Returns null for idle chats so callers can fall back to a default icon
+ * — `uncommittedWork` is carried by title contrast, not by this slot, so it
+ * only ever holds things that want your attention.
  */
 export function renderChatStatusDot(chat: SidebarChatRow): ReactNode | null {
   if (chat.status === "starting" || chat.status === "running") {
     return <Loader2 className="size-3.5 shrink-0 animate-spin text-logo" />
   }
-  const color = chat.status === "waiting_for_user" ? "blue" : chat.unread ? "emerald" : null
+  const color = chat.status === "waiting_for_user" ? "blue" : chat.unread ? "green" : null
   if (!color) return null
   return (
-    <div className="relative flex size-4 shrink-0 items-center justify-center">
-      <div
-        className={cn(
-          "absolute size-2.5 rounded-full animate-ping",
-          color === "blue" ? "bg-blue-400/80" : "bg-emerald-400/80",
-        )}
-      />
-      <div
-        className={cn(
-          "size-2.5 rounded-full ring-2 ring-muted/20 dark:ring-muted/50",
-          color === "blue" ? "bg-blue-400" : "bg-emerald-400",
-        )}
-      />
-    </div>
+    <span
+      className={cn(
+        "size-2.5 shrink-0 rounded-full",
+        color === "blue" ? "bg-blue-400/90" : "bg-green",
+      )}
+    />
   )
 }
 

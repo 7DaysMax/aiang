@@ -10,7 +10,7 @@ import {
   type ToolDefinitionConfig,
   type ToolExecutionContext,
 } from "@prismshadow/penguin-core"
-import type { PluginManifestTool } from "../shared/plugin"
+import type { PluginManifest, PluginManifestTool } from "../shared/plugin"
 import { findPluginManifestFile, parsePluginManifest } from "./plugin-manifest"
 import { getPluginsDir, listInstalledPlugins } from "./plugin-store"
 import {

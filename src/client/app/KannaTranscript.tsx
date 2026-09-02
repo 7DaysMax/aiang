@@ -24,25 +24,6 @@ import { SPECIAL_TOOL_NAMES } from "./derived"
 
 const SPECIAL_TOOL_NAME_SET = new Set<string>(SPECIAL_TOOL_NAMES)
 
-/**
- * DeepSeek/ccb 把同一条回复的思考与正文编成共享基座 + 计数器后缀的
- * messageId（thinking 为 ...000000000000、正文为 ...000000000001）。
- * 归一化后比较，避免正文因 messageId 不同而重复渲染模型头部。
- */
-export function sameAssistantMessageId(a: string | undefined, b: string | undefined): boolean {
-  if (!a || !b) return false
-  if (a === b) return true
-  return normalizeMessageId(a) === normalizeMessageId(b)
-}
-
-function normalizeMessageId(id: string): string {
-  const lastDash = id.lastIndexOf("-")
-  if (lastDash === -1) return id
-  const lastSegment = id.slice(lastDash + 1)
-  // 计数器后缀（纯数字，如 000000000000/000000000001）剥掉，保留共享基座。
-  return /^[0-9]+$/.test(lastSegment) ? id.slice(0, lastDash) : id
-}
-
 function isOpenLatestThinking(messages: HydratedTranscriptMessage[], index: number): boolean {
   if (messages[index]?.kind !== "assistant_thinking") return false
   for (let i = index + 1; i < messages.length; i++) {
@@ -78,6 +59,16 @@ function isOpenLatestAssistantText(messages: HydratedTranscriptMessage[], index:
   return true
 }
 
+function isFinalAssistantTextInTurn(messages: HydratedTranscriptMessage[], index: number): boolean {
+  if (messages[index]?.kind !== "assistant_text") return false
+  for (let i = index + 1; i < messages.length; i++) {
+    const kind = messages[i]!.kind
+    if (kind === "user_prompt") return true
+    if (kind === "assistant_text") return false
+  }
+  return true
+}
+
 export type TranscriptRenderItem =
   | { type: "single"; message: HydratedTranscriptMessage; index: number }
   | { type: "tool-group"; messages: HydratedTranscriptMessage[]; startIndex: number }
@@ -103,12 +94,14 @@ export interface ResolvedSingleTranscriptRow {
   isFinalStatus: boolean
   /** 当前会话生效的模型（最近一次 system_init 的 provider + model）。 */
   model?: AssistantModelIdentity
-  /** 本条 assistant_text 紧跟在同 messageId 的思考条目之后——头部已在思考卡片上渲染。 */
-  hasThinkingPrefix: boolean
+  /** 同一用户回合只在第一段助手内容上显示一次模型身份。 */
+  showAssistantHeader: boolean
   /** 思考条目还没被后文/下一段思考收掉——渲染「思考中…」。 */
   isLatestThinking: boolean
   /** 这条正文是当前轮还在增长的 assistant_text。 */
   isLatestAssistantText: boolean
+  /** 只有本轮最后一段正文在整轮结束后显示复制、重试与后续建议。 */
+  showAnswerActions: boolean
   /** 会话仍在生成，且这条思考/正文是开放的。 */
   isStreaming: boolean
   /** 本轮用户原话，给答完后的 Retry 填回输入框。 */
@@ -142,9 +135,10 @@ interface TranscriptMessageRenderState {
   hideResult: boolean
   isFinalStatus: boolean
   model?: AssistantModelIdentity
-  hasThinkingPrefix: boolean
+  showAssistantHeader: boolean
   isLatestThinking: boolean
   isLatestAssistantText: boolean
+  isFinalAssistantText: boolean
   nextPromptTimestamp?: string
   shouldRender: boolean
 }
@@ -175,9 +169,10 @@ function getTranscriptMessageRenderState(
     hideResult,
     isFinalStatus,
     model,
-    hasThinkingPrefix,
+    showAssistantHeader,
     isLatestThinking,
     isLatestAssistantText,
+    isFinalAssistantText,
     nextPromptTimestamp,
   }: Omit<TranscriptMessageRenderState, "shouldRender">
 ): TranscriptMessageRenderState {
@@ -186,7 +181,7 @@ function getTranscriptMessageRenderState(
   if (shouldRender) {
     switch (message.kind) {
       case "system_init":
-        shouldRender = isFirstSystem || isModelChange || handoff !== undefined || restored !== undefined
+        shouldRender = isModelChange || handoff !== undefined || restored !== undefined
         break
       case "handoff_boundary":
         // Not rendered as its own row — the switch surfaces on the next
@@ -229,9 +224,10 @@ function getTranscriptMessageRenderState(
     hideResult,
     isFinalStatus,
     model,
-    hasThinkingPrefix,
+    showAssistantHeader,
     isLatestThinking,
     isLatestAssistantText,
+    isFinalAssistantText,
     nextPromptTimestamp,
     shouldRender,
   }
@@ -279,15 +275,20 @@ function buildTranscriptMessageRenderStates(
     modelsAt[index] = currentModel
   }
 
-  // 思考条目的正文：同一 messageId 的 assistant_text 紧跟在
-  // assistant_thinking 之后，头部由思考卡片渲染，正文不再重复。
-  const hasThinkingPrefixes = new Array<boolean>(messages.length).fill(false)
-  for (let index = 1; index < messages.length; index++) {
+  // 模型身份属于整个用户回合，而不是每个流式文本分片。工具、状态和
+  // thinking/text 切换都不会重置；新用户消息或新会话才开启下一组。
+  const showAssistantHeaders = new Array<boolean>(messages.length).fill(false)
+  let assistantHeaderShown = false
+  for (let index = 0; index < messages.length; index++) {
     const message = messages[index]!
-    const previous = messages[index - 1]!
-    hasThinkingPrefixes[index] = message.kind === "assistant_text"
-      && previous.kind === "assistant_thinking"
-      && sameAssistantMessageId(previous.messageId, message.messageId)
+    if (message.kind === "user_prompt" || message.kind === "system_init") {
+      assistantHeaderShown = false
+      continue
+    }
+    if (message.kind === "assistant_thinking" || message.kind === "assistant_text") {
+      showAssistantHeaders[index] = !assistantHeaderShown
+      assistantHeaderShown = true
+    }
   }
 
   // Attach each handoff boundary to the next session init: the switch renders
@@ -332,9 +333,10 @@ function buildTranscriptMessageRenderStates(
       hideResult: nextMessage?.kind === "context_cleared" || previousMessage?.kind === "context_cleared",
       isFinalStatus: index === messages.length - 1,
       model: modelsAt[index],
-      hasThinkingPrefix: hasThinkingPrefixes[index] ?? false,
+      showAssistantHeader: showAssistantHeaders[index] ?? false,
       isLatestThinking: isOpenLatestThinking(messages, index),
       isLatestAssistantText: isOpenLatestAssistantText(messages, index),
+      isFinalAssistantText: isFinalAssistantTextInTurn(messages, index),
       nextPromptTimestamp: message.kind === "result" ? nextPromptTimestamps[index] : undefined,
     })
   })
@@ -520,9 +522,10 @@ function isResolvedTranscriptRowUnchanged(left: ResolvedTranscriptRow, right: Re
       && left.nextPromptTimestamp === right.nextPromptTimestamp
       && left.model?.provider === right.model?.provider
       && left.model?.model === right.model?.model
-      && left.hasThinkingPrefix === right.hasThinkingPrefix
+      && left.showAssistantHeader === right.showAssistantHeader
       && left.isLatestThinking === right.isLatestThinking
       && left.isLatestAssistantText === right.isLatestAssistantText
+      && left.showAnswerActions === right.showAnswerActions
       && left.isStreaming === right.isStreaming
       && left.retryPrompt === right.retryPrompt
       && sameMessage(left.message, right.message)
@@ -591,9 +594,10 @@ interface TranscriptSingleRowProps {
   hideResult: boolean
   isFinalStatus: boolean
   model?: AssistantModelIdentity
-  hasThinkingPrefix: boolean
+  showAssistantHeader: boolean
   isLatestThinking: boolean
   isLatestAssistantText: boolean
+  showAnswerActions: boolean
   isStreaming: boolean
   retryPrompt?: string
   nextPromptTimestamp?: string
@@ -622,8 +626,9 @@ const TranscriptSingleRow = memo(function TranscriptSingleRow({
   hideResult,
   isFinalStatus,
   model,
-  hasThinkingPrefix,
+  showAssistantHeader,
   isLatestThinking,
+  showAnswerActions,
   isStreaming,
   retryPrompt,
   nextPromptTimestamp,
@@ -657,14 +662,14 @@ const TranscriptSingleRow = memo(function TranscriptSingleRow({
         rendered = isFirstAccount ? <AccountInfoMessage key={message.id} message={message} /> : null
         break
       case "assistant_text":
-        rendered = hasThinkingPrefix
-          ? <TextMessage key={message.id} message={message} streaming={isStreaming} retryPrompt={retryPrompt} />
-          : (
+        rendered = showAssistantHeader
+          ? (
             <div key={message.id} className="flex flex-col gap-1.5">
               <AssistantReplyHeader model={model} />
-              <TextMessage message={message} streaming={isStreaming} retryPrompt={retryPrompt} />
+              <TextMessage message={message} streaming={isStreaming} retryPrompt={retryPrompt} showActions={showAnswerActions} />
             </div>
           )
+          : <TextMessage key={message.id} message={message} streaming={isStreaming} retryPrompt={retryPrompt} showActions={showAnswerActions} />
         break
       case "assistant_thinking":
         rendered = (
@@ -674,6 +679,7 @@ const TranscriptSingleRow = memo(function TranscriptSingleRow({
             model={model}
             isLatest={isLatestThinking}
             streaming={isStreaming}
+            showHeader={showAssistantHeader}
           />
         )
         break
@@ -763,9 +769,10 @@ const TranscriptSingleRow = memo(function TranscriptSingleRow({
   && prev.isFinalStatus === next.isFinalStatus
   && prev.model?.provider === next.model?.provider
   && prev.model?.model === next.model?.model
-  && prev.hasThinkingPrefix === next.hasThinkingPrefix
+  && prev.showAssistantHeader === next.showAssistantHeader
   && prev.isLatestThinking === next.isLatestThinking
   && prev.isLatestAssistantText === next.isLatestAssistantText
+  && prev.showAnswerActions === next.showAnswerActions
   && prev.isStreaming === next.isStreaming
   && prev.retryPrompt === next.retryPrompt
   && prev.nextPromptTimestamp === next.nextPromptTimestamp
@@ -871,9 +878,10 @@ export function buildResolvedTranscriptRows(
       hideResult: renderState.hideResult,
       isFinalStatus: renderState.isFinalStatus,
       model: renderState.model,
-      hasThinkingPrefix: renderState.hasThinkingPrefix,
+      showAssistantHeader: renderState.showAssistantHeader,
       isLatestThinking: renderState.isLatestThinking,
       isLatestAssistantText: renderState.isLatestAssistantText,
+      showAnswerActions: renderState.isFinalAssistantText && !isLoading,
       isStreaming: isLoading && (
         (item.message.kind === "assistant_thinking" && renderState.isLatestThinking)
         || (item.message.kind === "assistant_text" && renderState.isLatestAssistantText)
@@ -950,9 +958,10 @@ export const KannaTranscriptRow = memo(function KannaTranscriptRow({
       hideResult={row.hideResult}
       isFinalStatus={row.isFinalStatus}
       model={row.model}
-      hasThinkingPrefix={row.hasThinkingPrefix}
+      showAssistantHeader={row.showAssistantHeader}
       isLatestThinking={row.isLatestThinking}
       isLatestAssistantText={row.isLatestAssistantText}
+      showAnswerActions={row.showAnswerActions}
       isStreaming={row.isStreaming}
       retryPrompt={row.retryPrompt}
       nextPromptTimestamp={row.nextPromptTimestamp}
@@ -997,9 +1006,10 @@ export const KannaTranscriptRow = memo(function KannaTranscriptRow({
       && prev.row.isFinalStatus === next.row.isFinalStatus
       && prev.row.model?.provider === next.row.model?.provider
       && prev.row.model?.model === next.row.model?.model
-      && prev.row.hasThinkingPrefix === next.row.hasThinkingPrefix
+      && prev.row.showAssistantHeader === next.row.showAssistantHeader
       && prev.row.isLatestThinking === next.row.isLatestThinking
       && prev.row.isLatestAssistantText === next.row.isLatestAssistantText
+      && prev.row.showAnswerActions === next.row.showAnswerActions
       && prev.row.isStreaming === next.row.isStreaming
       && prev.row.retryPrompt === next.row.retryPrompt
       && prev.row.nextPromptTimestamp === next.row.nextPromptTimestamp

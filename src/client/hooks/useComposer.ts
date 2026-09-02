@@ -102,12 +102,13 @@ export function useComposer(args: {
 
   const selectModel = useCallback((modelId: string) => {
     if (!isModelSelectable(view, modelId)) return false
+    const modelOption = view.models.find((candidate) => candidate.id === modelId)
     // Write the full effective state with the model applied — the stored
     // state may still be for another provider (e.g. seeded from defaults on
     // a chat whose session pinned a different harness).
     useChatPreferencesStore.getState().setComposerState(
       view.composerChatId,
-      applyModelToComposerState(view.effectiveState, modelId)
+      applyModelToComposerState(view.effectiveState, modelId, modelOption)
     )
     return true
   }, [view])

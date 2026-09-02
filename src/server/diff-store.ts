@@ -1885,7 +1885,20 @@ export class DiffStore {
     path: string
   }) {
     const relativePath = normalizeRepoRelativePath(args.path)
-    if (isLikelyBinaryDiffPath(relativePath, inferProjectFileContentType(relativePath))) {
+    // A symlink's bytes are its target path (mode 120000), so it reads as text
+    // regardless of its filename — mirroring the snapshot scan's `!isSymlink`
+    // guard (see getProjectSnapshotFiles) that binary-sniffing would otherwise
+    // misclassify an extension-less link like `.claude/skills/shadcn`.
+    const worktreeInfo = await lstat(path.join(args.projectPath, relativePath)).catch(() => null)
+    const isSymlink = worktreeInfo?.isSymbolicLink() ?? false
+    // Size check first: a huge artifact is refused as a patch regardless of
+    // whether it would binary-sniff (an extension-less `.data` blob reads as
+    // octet-stream and would otherwise short-circuit before reaching the
+    // per-branch size guard below).
+    if ((worktreeInfo?.size ?? 0) > MAX_PATCH_SOURCE_BYTES) {
+      throw new Error("This file is too large to preview as a diff.")
+    }
+    if (!isSymlink && isLikelyBinaryDiffPath(relativePath, inferProjectFileContentType(relativePath))) {
       return { patch: binaryFilesDifferPatch(relativePath) }
     }
     const repo = await resolveRepo(args.projectPath)

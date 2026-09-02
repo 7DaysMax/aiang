@@ -88,6 +88,18 @@ describe("buildHandoffContext", () => {
     expect(context!.stats.includedEntries).toBe(2)
   })
 
+  test("merges adjacent streamed assistant deltas with the same message id", () => {
+    const context = build([
+      userPrompt("reply exactly"),
+      timestamped({ kind: "assistant_text", messageId: "message-1", text: "实现" }),
+      timestamped({ kind: "assistant_text", messageId: "message-1", text: "引擎已连接" }),
+    ])!
+
+    expect(context.text).toContain("--- assistant ---\n实现引擎已连接")
+    expect(context.text.match(/--- assistant ---/g)).toHaveLength(1)
+    expect(context.stats.includedEntries).toBe(2)
+  })
+
   test("keeps error results and prior handoff boundaries as markers", () => {
     const context = build([
       userPrompt("do it"),

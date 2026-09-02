@@ -7,7 +7,7 @@ import type { VisionProviderKind, VisionServiceSettings } from "../shared/types"
 import { VISION_PROVIDER_PRESETS } from "../shared/vision"
 
 /**
- * 识图服务（视觉模型）：DeepSeek V4 是文本模型，看不懂图片。
+ * 识图服务（视觉模型）：Youmi 当前的图片附件链路使用独立视觉服务。
  *
  * 应用在设置里保存「识图服务」配置（千问/GLM + 用户自填 API Key），
  * 并把一个自研的 stdio MCP server（vision-mcp-server.mjs）注册给各 agent

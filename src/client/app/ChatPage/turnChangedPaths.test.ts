@@ -24,9 +24,10 @@ function user(id: string, content: string): ResolvedTranscriptRow {
     isLatestTodoWrite: false,
     hideResult: false,
     isFinalStatus: false,
-    hasThinkingPrefix: false,
+    showAssistantHeader: false,
     isLatestThinking: false,
     isLatestAssistantText: false,
+    showAnswerActions: false,
     isStreaming: false,
   }
 }
@@ -58,9 +59,10 @@ function tool(
     isLatestTodoWrite: false,
     hideResult: false,
     isFinalStatus: false,
-    hasThinkingPrefix: false,
+    showAssistantHeader: false,
     isLatestThinking: false,
     isLatestAssistantText: false,
+    showAnswerActions: false,
     isStreaming: false,
   }
 }

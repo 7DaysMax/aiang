@@ -84,6 +84,47 @@ describe("CodexAppServerManager", () => {
     expect((process.messages[2] as any).method).toBe("thread/start")
   })
 
+  test("reads the official paginated model catalog from app-server", async () => {
+    const process = new FakeCodexProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeServerMessage({ id: message.id, result: { userAgent: "codex-test" } })
+      } else if (message.method === "model/list") {
+        const secondPage = message.params.cursor === "page-2"
+        child.writeServerMessage({
+          id: message.id,
+          result: {
+            data: [{
+              id: secondPage ? "gpt-5.6-terra" : "gpt-5.6-sol",
+              model: secondPage ? "gpt-5.6-terra" : "gpt-5.6-sol",
+              displayName: secondPage ? "GPT-5.6-Terra" : "GPT-5.6-Sol",
+              description: "Codex model",
+              hidden: false,
+              supportedReasoningEfforts: [{ reasoningEffort: "low", description: "Fast" }],
+              defaultReasoningEffort: "low",
+              additionalSpeedTiers: ["fast"],
+              serviceTiers: [],
+              isDefault: !secondPage,
+            }],
+            nextCursor: secondPage ? null : "page-2",
+          },
+        })
+      }
+    })
+    const manager = new CodexAppServerManager({ spawnProcess: () => process as never })
+
+    const models = await manager.listModels("/tmp/project")
+
+    expect(models?.map((model) => model.model)).toEqual(["gpt-5.6-sol", "gpt-5.6-terra"])
+    expect(process.messages.map((message: any) => message.method)).toEqual([
+      "initialize",
+      "initialized",
+      "model/list",
+      "model/list",
+    ])
+    expect((process.messages[3] as any).params.cursor).toBe("page-2")
+    expect(process.killed).toBe(true)
+  })
+
   test("falls back to thread/start when thread/resume is recoverably missing", async () => {
     const process = new FakeCodexProcess((message, child) => {
       if (message.method === "initialize") {
@@ -605,8 +646,8 @@ describe("CodexAppServerManager", () => {
 
     expect(result).toBe("{\"title\":\"Codex title\"}")
     expect(process.killed).toBe(true)
-    expect((process.messages.find((message: any) => message.method === "thread/start") as any)?.params.model).toBe("deepseek-v4-flash")
-    expect((process.messages.find((message: any) => message.method === "turn/start") as any)?.params.model).toBe("deepseek-v4-flash")
+    expect((process.messages.find((message: any) => message.method === "thread/start") as any)?.params.model).toBe("gpt-5.4-mini")
+    expect((process.messages.find((message: any) => message.method === "turn/start") as any)?.params.model).toBe("gpt-5.4-mini")
   })
 
   test("maps command execution and agent output into the shared transcript stream", async () => {
@@ -875,6 +916,162 @@ describe("CodexAppServerManager", () => {
     expect(texts).toHaveLength(2)
     expect(texts[0]).toMatchObject({ kind: "assistant_text", messageId: "msg-1", text: "我正在检查" })
     expect(texts[1]).toMatchObject({ kind: "assistant_text", messageId: "msg-1", text: "项目结构，马上给你结论。" })
+  })
+
+  test("streams agentMessage deltas without repeating the completed snapshot", async () => {
+    const process = new FakeCodexProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeServerMessage({ id: message.id, result: { userAgent: "codex-test" } })
+      } else if (message.method === "thread/start") {
+        child.writeServerMessage({
+          id: message.id,
+          result: { thread: { id: "thread-1" }, model: "gpt-5.4", reasoningEffort: "high" },
+        })
+      } else if (message.method === "turn/start") {
+        child.writeServerMessage({
+          id: message.id,
+          result: { turn: { id: "turn-1", status: "inProgress", error: null } },
+        })
+        child.writeServerMessage({
+          method: "item/started",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            item: { type: "agentMessage", id: "msg-1", text: "", phase: "final_answer" },
+          },
+        })
+        for (const delta of ["这是", "真实", "流式输出。"]) {
+          child.writeServerMessage({
+            method: "item/agentMessage/delta",
+            params: { threadId: "thread-1", turnId: "turn-1", itemId: "msg-1", delta },
+          })
+        }
+        child.writeServerMessage({
+          method: "item/completed",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            item: {
+              type: "agentMessage",
+              id: "msg-1",
+              text: "这是真实流式输出。",
+              phase: "final_answer",
+            },
+          },
+        })
+        child.writeServerMessage({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-1",
+            turn: { id: "turn-1", status: "completed", error: null },
+          },
+        })
+      }
+    })
+
+    const manager = new CodexAppServerManager({ spawnProcess: () => process as never })
+    await manager.startSession({
+      chatId: "chat-1",
+      cwd: "/tmp/project",
+      model: "gpt-5.4",
+      sessionToken: null,
+    })
+    const turn = await manager.startTurn({
+      chatId: "chat-1",
+      model: "gpt-5.4",
+      content: "测试流式输出",
+      planMode: false,
+      onToolRequest: async () => ({}),
+    })
+
+    const events = await collectStream(turn.stream)
+    const textDeltas = events
+      .filter((event) => event.type === "transcript" && event.entry.kind === "assistant_text")
+      .map((event) => event.entry.text)
+
+    expect(textDeltas).toEqual(["这是", "真实", "流式输出。"])
+    expect(textDeltas.join("")).toBe("这是真实流式输出。")
+  })
+
+  test("streams reasoning deltas without repeating the completed snapshot", async () => {
+    const process = new FakeCodexProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeServerMessage({ id: message.id, result: { userAgent: "codex-test" } })
+      } else if (message.method === "thread/start") {
+        child.writeServerMessage({
+          id: message.id,
+          result: { thread: { id: "thread-1" }, model: "gpt-5.4", reasoningEffort: "high" },
+        })
+      } else if (message.method === "turn/start") {
+        child.writeServerMessage({
+          id: message.id,
+          result: { turn: { id: "turn-1", status: "inProgress", error: null } },
+        })
+        child.writeServerMessage({
+          method: "item/started",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            item: { type: "reasoning", id: "reason-1", summary: [], content: [] },
+          },
+        })
+        for (const delta of ["先检查", "，再修复"]) {
+          child.writeServerMessage({
+            method: "item/reasoning/summaryTextDelta",
+            params: {
+              threadId: "thread-1",
+              turnId: "turn-1",
+              itemId: "reason-1",
+              delta,
+              summaryIndex: 0,
+            },
+          })
+        }
+        child.writeServerMessage({
+          method: "item/completed",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            item: {
+              type: "reasoning",
+              id: "reason-1",
+              summary: [{ type: "summaryText", text: "先检查，再修复" }],
+              content: [],
+            },
+          },
+        })
+        child.writeServerMessage({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-1",
+            turn: { id: "turn-1", status: "completed", error: null },
+          },
+        })
+      }
+    })
+
+    const manager = new CodexAppServerManager({ spawnProcess: () => process as never })
+    await manager.startSession({
+      chatId: "chat-1",
+      cwd: "/tmp/project",
+      model: "gpt-5.4",
+      sessionToken: null,
+    })
+    const turn = await manager.startTurn({
+      chatId: "chat-1",
+      model: "gpt-5.4",
+      content: "测试思考流式输出",
+      planMode: false,
+      onToolRequest: async () => ({}),
+    })
+
+    const events = await collectStream(turn.stream)
+    const reasoningDeltas = events
+      .filter((event) => event.type === "transcript" && event.entry.kind === "thinking")
+      .map((event) => event.entry.text)
+
+    expect(reasoningDeltas).toEqual(["", "先检查", "，再修复"])
+    expect(reasoningDeltas.join("")).toBe("先检查，再修复")
   })
 
   test("emits only a compact boundary when Codex reports thread compaction", async () => {

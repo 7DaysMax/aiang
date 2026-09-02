@@ -1,6 +1,6 @@
 import { memo, useMemo } from "react"
 import type { ChatDiffFile } from "../../../shared/types"
-import { DiffTable, type DiffTableRow } from "../bui/DiffTable"
+import { ProjectDiffTable, type ProjectDiffRow } from "@/components/primitives/DiffTable"
 
 export interface ChangesSummaryActions {
   onOpenFile: (path: string) => void
@@ -21,7 +21,7 @@ export const ChangesSummaryCard = memo(function ChangesSummaryCard({
   files: ChatDiffFile[]
   actions: ChangesSummaryActions
 }) {
-  const rows = useMemo<DiffTableRow[]>(
+  const rows = useMemo<ProjectDiffRow[]>(
     () => files.map((file) => ({
       key: file.path,
       file: fileName(file.path),
@@ -36,7 +36,7 @@ export const ChangesSummaryCard = memo(function ChangesSummaryCard({
   if (rows.length === 0) return null
 
   return (
-    <DiffTable
+    <ProjectDiffTable
       title="Proposed edits"
       rows={rows}
       onOpenFile={actions.onOpenFile}

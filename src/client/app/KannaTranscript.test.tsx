@@ -255,13 +255,13 @@ Please check the latest error first.`,
 
     // The boundary renders no row of its own; the second init (same provider,
     // same model — otherwise hidden) surfaces the repair.
-    expect(countRowWrappers(html)).toBe(2)
+    expect(countRowWrappers(html)).toBe(1)
     expect(html).toContain("会话已修复")
     expect(html).toContain("lucide-rotate-cw")
 
     // Without the boundary, the identical second init stays hidden.
     const withoutRestore = renderTranscript([systemInit("init-1"), systemInit("init-2")])
-    expect(countRowWrappers(withoutRestore)).toBe(1)
+    expect(countRowWrappers(withoutRestore)).toBe(0)
     expect(withoutRestore).not.toContain("会话已修复")
   })
 
@@ -379,7 +379,7 @@ Please check the latest error first.`,
       },
     ])
 
-    expect(countRowWrappers(html)).toBe(2)
+    expect(countRowWrappers(html)).toBe(1)
   })
 
   test("renders a model-changed row when a later session uses a different model", () => {
@@ -419,13 +419,13 @@ Please check the latest error first.`,
       },
     ])
 
-    expect(countRowWrappers(html)).toBe(2)
+    expect(countRowWrappers(html)).toBe(1)
     // Model ids resolve to their human-readable catalog labels.
-    expect(html).toContain("Claude Code")
-    expect(html).toContain("Sonnet")
+    expect(html).toContain("Opus 4.8")
+    expect(html).not.toContain("Sonnet")
     expect(html).toContain("模型已更改")
     expect(html).toContain("Opus")
-    expect(html.match(/data-provider-icon="claude"/g)).toHaveLength(1)
+    expect(html).toContain("lucide-arrow-right-left")
   })
 
   test("renders assistant replies with model header, thinking card, and answer", () => {
@@ -458,13 +458,61 @@ Please check the latest error first.`,
     ])
 
     expect(html).toContain("DeepSeek Flash")
-    // system_init 行 + 回复头部各一个。
-    expect(html.match(/data-provider-icon="deepseek"/g)).toHaveLength(2)
+    // 初始 system_init 不再重复占一行，模型身份只由回复头部渲染。
+    expect(html.match(/data-provider-icon="deepseek"/g)).toHaveLength(1)
     expect(html).toContain("思考过程")
     expect(html).toContain("Light both ends.")
   })
 
-  test("does not duplicate the family name in the DeepSeek session header", () => {
+  test("shows answer actions only on the final assistant segment in a tool-using turn", () => {
+    const html = renderTranscript([
+      {
+        id: "system-actions",
+        kind: "system_init",
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        tools: [],
+        agents: [],
+        slashCommands: [],
+        mcpServers: [],
+        timestamp: new Date().toISOString(),
+      },
+      {
+        id: "user-actions",
+        kind: "user_prompt",
+        content: "Inspect the project",
+        attachments: [],
+        timestamp: new Date().toISOString(),
+      },
+      {
+        id: "assistant-actions-1",
+        kind: "assistant_text",
+        text: "I will inspect the project first.",
+        timestamp: new Date().toISOString(),
+      },
+      createToolMessage("tool-actions"),
+      {
+        id: "assistant-actions-2",
+        kind: "assistant_text",
+        text: "Inspection complete. The project is healthy.",
+        timestamp: new Date().toISOString(),
+      },
+      {
+        id: "result-actions",
+        kind: "result",
+        success: true,
+        result: "Completed",
+        durationMs: 100,
+        timestamp: new Date().toISOString(),
+      },
+    ])
+
+    expect(html.match(/aria-label="Copy"/g) ?? []).toHaveLength(1)
+    expect(html).not.toContain("接下来")
+    expect(html.match(/data-provider-icon="codex"/g) ?? []).toHaveLength(1)
+  })
+
+  test("hides the initial session row because the reply header owns model identity", () => {
     const html = renderTranscript([
       {
         id: "system-1",
@@ -479,10 +527,7 @@ Please check the latest error first.`,
       },
     ])
 
-    // 之前会渲染成 "DeepSeekDeepSeek Flash"：provider 名 + 目录 label 里的家族名重复。
-    expect(html).not.toContain("DeepSeekDeepSeek Flash")
-    expect(html).toContain("DeepSeek Flash")
-    expect(html).toContain("DeepSeek Flash</span>")
+    expect(html).toBe("")
   })
 
   test("treats counter-suffixed DeepSeek messageIds as the same reply", () => {
@@ -514,8 +559,8 @@ Please check the latest error first.`,
       },
     ])
 
-    // 头部只由思考卡片渲染一次：system_init 行 + 回复头部各一个。
-    expect(html.match(/data-provider-icon="deepseek"/g)).toHaveLength(2)
+    // 初始会话行不再重复模型身份，头部只由思考卡片渲染一次。
+    expect(html.match(/data-provider-icon="deepseek"/g)).toHaveLength(1)
     expect(html).toContain("思考过程")
     expect(html).toContain("The answer is Wednesday.")
   })
@@ -671,7 +716,7 @@ Please check the latest error first.`,
 
     // The boundary renders no row of its own — the switch surfaces on the
     // new session init as only the destination harness.
-    expect(countRowWrappers(html)).toBe(3)
+    expect(countRowWrappers(html)).toBe(2)
     expect(html).toContain("Codex")
     expect(html).not.toContain("Claude Code → Codex")
     expect(html).toContain('data-provider-icon="codex"')

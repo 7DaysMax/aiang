@@ -25,6 +25,7 @@ const clientEnv = {
   KANNA_DEV_ALLOWED_HOSTS: allowedHosts,
   KANNA_DEV_BACKEND_TARGET_HOST: devArgs.backendTargetHost,
   KANNA_DEV_BACKEND_PORT: String(serverPort),
+  VITE_AIANG_DEV_BACKEND_PORT: String(serverPort),
 }
 
 function spawnLabeledProcess(label: string, args: string[]) {

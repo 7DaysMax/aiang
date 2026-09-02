@@ -18,6 +18,7 @@ import { SidebarViewSwitcher, type SidebarView } from "../components/chat-ui/sid
 import { MachineSwitcher } from "./MachineSwitcher"
 import { getResolvedKeybindings } from "../lib/keybindings"
 import { useIsStandalone } from "../hooks/useIsStandalone"
+import { StatusPill } from "../components/bui/atoms/StatusPill"
 import type { ChatTouchedFilesResult, KeybindingsSnapshot, SidebarData, SidebarChatRow, UpdateSnapshot } from "../../shared/types"
 import type { SocketStatus } from "./socket"
 import {
@@ -31,6 +32,7 @@ import { SIDEBAR_VIEW_STORAGE_KEY, SIDEBAR_WIDTH_STORAGE_KEY } from "../lib/stor
 import { useAppSettingsStore } from "../stores/appSettingsStore"
 import { OPEN_COMMAND_PALETTE_EVENT, openCommandPalette } from "../components/command-palette/CommandPalette"
 import { APP_VERSION } from "../../shared/branding"
+import { SidebarNavSurface } from "@/components/primitives/SidebarNav"
 
 export const DEFAULT_SIDEBAR_WIDTH = 275
 export const MIN_SIDEBAR_WIDTH = 220
@@ -437,7 +439,6 @@ function KannaSidebarImpl({
   const isUtilityPageActive = isLocalProjectsActive || isSettingsActive
   const isConnecting = connectionStatus === "connecting" || !ready
   const statusLabel = isConnecting ? "连接中" : connectionStatus === "connected" ? "已连接" : "未连接"
-  const statusDotClass = connectionStatus === "connected" ? "bg-emerald-500" : "bg-amber-500"
   const showUpdateButton = updateSnapshot?.updateAvailable === true
   const showDevBadge = updateSnapshot
     ? updateSnapshot.latestVersion === `${updateSnapshot.currentVersion}-dev`
@@ -473,7 +474,7 @@ function KannaSidebarImpl({
         </div>
       )}
 
-      <div
+      <SidebarNavSurface
         data-sidebar="open"
         className={cn(
           "fixed inset-0 z-50 bg-background dark:bg-card flex flex-col h-[100dvh] select-none",
@@ -770,12 +771,16 @@ function KannaSidebarImpl({
                 <Settings className="h-4 w-4 text-muted-foreground" />
                 <span className="text-sm">设置</span>
               </div>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span>{statusLabel}</span>
+              <div className="flex items-center text-xs text-muted-foreground">
                 {isConnecting ? (
-                  <Loader2 className="h-2 w-2 animate-spin" />
+                  <StatusPill tone="neutral" dot={false}>
+                    <Loader2 className="size-3 animate-spin" />
+                    {statusLabel}
+                  </StatusPill>
                 ) : (
-                  <span className={cn("h-2 w-2 rounded-full", statusDotClass)} />
+                  <StatusPill tone={connectionStatus === "connected" ? "green" : "orange"}>
+                    {statusLabel}
+                  </StatusPill>
                 )}
               </div>
             </div>
@@ -818,7 +823,7 @@ function KannaSidebarImpl({
             persistSidebarWidth(clampedWidth)
           }}
         />
-      </div>
+      </SidebarNavSurface>
 
       <Dialog
         open={Boolean(archivedProject)}

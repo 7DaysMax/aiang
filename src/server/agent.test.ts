@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, mock, test } from "bun:test"
 import {
   AgentCoordinator,
   buildAttachmentHintText,
@@ -17,6 +17,23 @@ import type { HarnessTurn } from "./harness-types"
 import type { ChatAttachment, TranscriptEntry } from "../shared/types"
 import type { SessionArtifactStatus } from "./session-artifacts"
 import { timestamped } from "./transcript"
+
+// 测试期望走「无模型档案」的 claude 原生路径（wireModel = 传入的 model）。
+// 本机 ~/.aiang(-dev)/data/settings.json 可能配了模型档案，会污染
+// resolveModelRuntime()，导致 engine 判成 deepseek、attribution id 与测试
+// 期望不一致。这里固定为 kind "none"，与干净环境的行为一致。
+const actualModelProfiles = await import("./model-profiles")
+mock.module("./model-profiles", () => ({
+  ...actualModelProfiles,
+  resolveModelRuntime: () => ({
+    kind: "none",
+    apiKey: "",
+    baseUrl: "",
+    modelId: "",
+    protocol: "openai-compat",
+    profile: null,
+  }),
+}))
 
 async function waitFor(condition: () => boolean, timeoutMs = 2000) {
   const start = Date.now()
@@ -766,9 +783,9 @@ describe("AgentCoordinator codex integration", () => {
 
     await waitFor(() => store.turnFinishedCount === 1)
 
-    // DeepSeek V4 无 fast mode：serviceTier 不提升；effort 走官方档位。
-    expect(sessionCalls).toEqual([{ chatId: "chat-1", sessionToken: null }])
-    expect(turnCalls).toEqual([{ effort: "max" }])
+    // 官方 Codex 默认模型支持 fast tier；effort 与 serviceTier 都应透传。
+    expect(sessionCalls).toEqual([{ chatId: "chat-1", sessionToken: null, serviceTier: "fast" }])
+    expect(turnCalls).toEqual([{ effort: "max", serviceTier: "fast" }])
   })
 
   test("approving synthetic codex ExitPlanMode starts a hidden follow-up turn and can clear context", async () => {
@@ -1365,7 +1382,7 @@ describe("AgentCoordinator codex integration", () => {
               entry: timestamped({
                 kind: "system_init",
                 provider: "codex",
-                model: "deepseek-v4-flash",
+                model: "gpt-5.6-sol",
                 tools: [],
                 agents: [],
                 slashCommands: [],
@@ -2604,12 +2621,102 @@ describe("session restore on lost native session", () => {
     await waitFor(() => store.messages.some((entry) => entry.kind === "collaboration_review"))
 
     expect(sentContents).toHaveLength(2)
-    expect(sentContents[0]).toBe("加一个导出")
+    expect(sentContents[0]).toContain("加一个导出")
     expect(sentContents[1]).toContain("你现在是验收员")
     const review = store.messages.find((entry) => entry.kind === "collaboration_review")
     expect(review).toMatchObject({ kind: "collaboration_review", verdict: "fail" })
     if (review?.kind !== "collaboration_review") throw new Error("expected collaboration_review")
     expect(review.summary).toContain("缺导出")
+  })
+
+  test("uses the selected implementation engine and returns to the main engine for review", async () => {
+    const implementationEvents = new AsyncEventQueue<any>()
+    const implementationPrompts: string[] = []
+    const reviewTurns: Array<{ content: string; model: string }> = []
+    const fakeCodexManager = {
+      async startSession() {},
+      stopSession() {},
+      async startTurn(args: { content: string; model: string }): Promise<HarnessTurn> {
+        reviewTurns.push({ content: args.content, model: args.model })
+        async function* stream() {
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "assistant_text",
+              text: "PASS\n实现符合要求",
+            }),
+          }
+          yield {
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "result",
+              subtype: "success",
+              isError: false,
+              durationMs: 0,
+              result: "",
+            }),
+          }
+        }
+        return { provider: "codex", stream: stream(), interrupt: async () => {}, close: () => {} }
+      },
+    }
+
+    const store = createFakeStore()
+    const coordinator = new AgentCoordinator({
+      store: store as never,
+      onStateChange: () => {},
+      codexManager: fakeCodexManager as never,
+      startClaudeSession: async () => ({
+        provider: "claude",
+        stream: implementationEvents,
+        getAccountInfo: async () => null,
+        interrupt: async () => {},
+        close: () => implementationEvents.close(),
+        setModel: async () => {},
+        setPermissionMode: async () => {},
+        sendPrompt: async (content: string) => {
+          implementationPrompts.push(content)
+          implementationEvents.push({
+            type: "transcript" as const,
+            entry: timestamped({ kind: "assistant_text", text: "实现完成。" }),
+          })
+          implementationEvents.push({
+            type: "transcript" as const,
+            entry: timestamped({
+              kind: "result",
+              subtype: "success",
+              isError: false,
+              durationMs: 0,
+              result: "",
+            }),
+          })
+        },
+      }),
+    })
+
+    await coordinator.send({
+      type: "chat.send",
+      chatId: "chat-1",
+      provider: "codex",
+      content: "实现导出功能",
+      model: "gpt-5.4",
+      collaboration: true,
+      implementationProvider: "claude",
+    })
+
+    await waitFor(() => store.messages.some((entry) => entry.kind === "collaboration_review"))
+
+    expect(implementationPrompts).toHaveLength(1)
+    expect(implementationPrompts[0]).toContain("实现导出功能")
+    expect(reviewTurns).toHaveLength(1)
+    expect(reviewTurns[0]?.content).toContain("<handoff_transcript>")
+    expect(reviewTurns[0]?.content).toContain("你现在是验收员")
+    expect(reviewTurns[0]?.model).toBe("gpt-5.4")
+    expect(store.chat.provider).toBe("codex")
+    expect(store.messages.find((entry) => entry.kind === "collaboration_review")).toMatchObject({
+      kind: "collaboration_review",
+      verdict: "pass",
+    })
   })
 })
 
@@ -2711,6 +2818,8 @@ function createFakeStore(options?: {
         planMode: message.planMode,
         autoPlan: message.autoPlan,
         collaboration: message.collaboration,
+        implementationProvider: message.implementationProvider,
+        reviewProvider: message.reviewProvider,
       }
       this.queuedMessages.push(queuedMessage)
       return queuedMessage

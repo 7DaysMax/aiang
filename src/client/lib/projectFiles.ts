@@ -9,14 +9,6 @@ export interface ProjectTreeSnapshot {
   entries: ProjectTreeEntry[]
 }
 
-export interface CompileResult {
-  ok: boolean
-  exitCode: number
-  command: string
-  output: string
-  durationMs: number
-}
-
 async function parseJsonResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`
@@ -71,12 +63,6 @@ export async function writeProjectFile(projectId: string, filePath: string, cont
     }
     throw new Error(`保存失败：${message}`)
   }
-}
-
-export async function compileProject(projectId: string): Promise<CompileResult> {
-  return await parseJsonResponse<CompileResult>(
-    await fetch(`/api/projects/${encodeURIComponent(projectId)}/compile`, { method: "POST" }),
-  )
 }
 
 const BINARY_EXTENSIONS = new Set([

@@ -21,6 +21,7 @@ import { CHAT_MODE_LABELS, deriveComposerOptionControls } from "../../lib/compos
 import { cn } from "../../lib/utils"
 import type { ComposerState } from "../../stores/chatPreferencesStore"
 import { useCodexInstallStore } from "../../stores/codexInstallStore"
+import { useAppSettingsStore } from "../../stores/appSettingsStore"
 import { useAuthService, useProviderAuthStore } from "../../stores/providerAuthStore"
 import { PROVIDER_ICONS } from "../provider-icons"
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover"
@@ -276,6 +277,10 @@ export function ChatPreferenceControls({
   const ModelIcon = Box
   const cursorAuth = useAuthService("cursor")
   const authSocket = useProviderAuthStore((store) => store.socket)
+  // 档案切换器本质是「换账号/换端点」：只有一个档案时它和 provider 选择器
+  // 重复（都是 DeepSeek），且和旁边的模型选择器看起来像两个模型下拉；
+  // 只有多个档案（DeepSeek 官方 + OpenRouter 等）时才有切换价值。
+  const modelProfileCount = useAppSettingsStore((store) => store.settings?.modelProfiles?.length ?? 0)
   // Central availability registry (shared with the command palette): which
   // option controls exist for this provider/model and their current values.
   // Only `provider` and `model`/`modelOptions` feed the non-mode controls; the
@@ -364,7 +369,7 @@ export function ChatPreferenceControls({
         </InputPopover>
       ) : null}
 
-      {showProviderPicker && selectedProvider !== "cursor" ? <ModelProfileSwitcher /> : null}
+      {showProviderPicker && selectedProvider !== "cursor" && modelProfileCount > 1 ? <ModelProfileSwitcher /> : null}
 
       <InputPopover
         open={modelPickerOpen}

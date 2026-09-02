@@ -469,11 +469,13 @@ export function parseDeepSeekStatusHtml(html: string, fetchedAt = Date.now()): D
   const componentLevels = new Map<string, DeepSeekStatusLevel>()
   let overallStatus: DeepSeekStatusLevel = "operational"
   const consider = (componentId: string | undefined, rawStatus: string | undefined) => {
-    if (!componentId || !rawStatus) return
+    if (!rawStatus) return
     const level = statusToLevel(rawStatus)
-    const current = componentLevels.get(componentId) ?? "operational"
-    if (severityOrder.indexOf(level) < severityOrder.indexOf(current)) {
-      componentLevels.set(componentId, level)
+    if (componentId) {
+      const current = componentLevels.get(componentId) ?? "operational"
+      if (severityOrder.indexOf(level) < severityOrder.indexOf(current)) {
+        componentLevels.set(componentId, level)
+      }
     }
     if (severityOrder.indexOf(level) < severityOrder.indexOf(overallStatus)) {
       overallStatus = level
@@ -483,8 +485,12 @@ export function parseDeepSeekStatusHtml(html: string, fetchedAt = Date.now()): D
     for (const component of change.affected_components ?? []) {
       consider(component.component_id, component.status)
     }
-    // 兜底：事件自身状态若可直接映射为等级（如 maintenance）。
-    consider(undefined, statusToLevel(change.status) === "operational" ? undefined : change.status)
+    // 兜底：事件自身状态若可直接映射为等级，或是未绑定组件的全局维护，
+    // 仍应更新整体状态。
+    const directStatus = statusToLevel(change.status) === "operational"
+      ? (change.type === "maintenance" ? "maintenance" : undefined)
+      : change.status
+    consider(undefined, directStatus)
   }
 
   // 次级兜底：没有 active_changes 时，看是否有结束时间在未来的冲击（计划维护等）。

@@ -1,7 +1,8 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react"
-import { ArrowUp, Loader2, Paperclip, Sparkles } from "lucide-react"
+import { ArrowRight, ArrowUp, Box, Check, FileImage, FileText, ListChecks, Loader2, Paperclip, Plus, Sparkles, WandSparkles, X } from "lucide-react"
 import {
   chatModeFromFlags,
+  DEFAULT_BEAUTIFUL_UI_PREFERENCES,
   type AgentProvider,
   type ChatAttachment,
   type ChatMode,
@@ -11,9 +12,9 @@ import {
   type ProviderCatalogEntry,
   type DeepSeekPromptOptimizeResult,
   resolveClaudeContextWindowMaxTokens,
-  resolveModelLabel,
 } from "../../../shared/types"
 import { Button } from "../ui/button"
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover"
 import { Textarea } from "../ui/textarea"
 import { ScrollArea } from "../ui/scroll-area"
 import { cn } from "../../lib/utils"
@@ -26,9 +27,8 @@ import { CHAT_INPUT_ATTRIBUTE, focusNextChatInput, REQUEST_ATTACH_FILES_EVENT } 
 import { formatPathWithTilde } from "../../lib/pathUtils"
 import { useDeepSeekBalanceStore } from "../../stores/deepSeekBalanceStore"
 import { ChatPreferenceControls } from "./ChatPreferenceControls"
-import { CollaborationCoach } from "./CollaborationCoach"
+import { PROVIDER_ICONS } from "../provider-icons"
 import { ContextWindowMeter } from "./ContextWindowMeter"
-import { AttachmentFileCard, AttachmentImageCard } from "../messages/AttachmentCard"
 import { AttachmentPreviewModal } from "../messages/AttachmentPreviewModal"
 import { classifyAttachmentPreview } from "../messages/attachmentPreview"
 import { overrideContextWindowMaxTokens, type ContextWindowSnapshot } from "../../lib/contextWindow"
@@ -41,6 +41,9 @@ import {
 } from "../../lib/skill-menu"
 import { getVirtualCommand, mergeVirtualSkillMenuItems, type VirtualCommand } from "../../lib/virtualCommands"
 import { COMPOSER_INSERT_EVENT, type ComposerInsertDetail } from "../../lib/composerInsert"
+import "./ChatInput.css"
+import { PromptBarSurface } from "@/components/primitives/PromptBar"
+import { useAppSettingsStore } from "../../stores/appSettingsStore"
 
 const MAX_FILES_PER_DROP = 50
 const MAX_CONCURRENT_UPLOADS = 3
@@ -138,7 +141,7 @@ interface ComposerAttachment extends ChatAttachment {
 interface Props {
   onSubmit: (
     value: string,
-    options?: { provider?: AgentProvider; model?: string; modelOptions?: ModelOptions; planMode?: boolean; autoPlan?: boolean; attachments?: ChatAttachment[]; collaboration?: boolean }
+    options?: { provider?: AgentProvider; model?: string; modelOptions?: ModelOptions; planMode?: boolean; autoPlan?: boolean; attachments?: ChatAttachment[]; collaboration?: boolean; implementationProvider?: AgentProvider; reviewProvider?: AgentProvider }
   ) => Promise<void>
   onLayoutChange?: () => void
   onCancel?: () => void
@@ -170,6 +173,95 @@ export interface ChatInputHandle {
   enqueueFiles: (files: File[]) => void
 }
 
+interface CollaborationRolePickerProps {
+  roleLabel: "主控" | "实现" | "验收"
+  provider: AgentProvider
+  providerLabel: string
+  availableProviders: ProviderCatalogEntry[]
+  selectedProvider: AgentProvider | null
+  inheritedProviderLabel?: string
+  disabled?: boolean
+  onSelectProvider: (provider: AgentProvider | null) => void
+}
+
+function CollaborationRolePicker({
+  roleLabel,
+  provider,
+  providerLabel,
+  availableProviders,
+  selectedProvider,
+  inheritedProviderLabel,
+  disabled = false,
+  onSelectProvider,
+}: CollaborationRolePickerProps) {
+  const [open, setOpen] = useState(false)
+  const ProviderIcon = PROVIDER_ICONS[provider]
+
+  const selectProvider = (nextProvider: AgentProvider | null) => {
+    onSelectProvider(nextProvider)
+    setOpen(false)
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="none"
+          size="none"
+          className="agent-composer-route-node"
+          aria-label={`切换${roleLabel}引擎，当前 ${providerLabel}`}
+          title={`切换${roleLabel}引擎`}
+          disabled={disabled}
+        >
+          <span className="agent-composer-route-role">{roleLabel}</span>
+          <ProviderIcon className="size-3 shrink-0" aria-hidden="true" />
+          <span className="agent-composer-route-provider-label">{providerLabel}</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        side="top"
+        align="start"
+        sideOffset={6}
+        className="agent-composer-plus-menu agent-composer-role-menu"
+        aria-label={`选择${roleLabel}引擎`}
+      >
+        <div className="agent-composer-role-menu-title">选择{roleLabel}引擎</div>
+        {inheritedProviderLabel ? (
+          <button
+            type="button"
+            className="agent-composer-menu-item"
+            aria-pressed={selectedProvider === null}
+            onClick={() => selectProvider(null)}
+          >
+            <ProviderIcon className="size-3.5 shrink-0" aria-hidden="true" />
+            <span className="flex-1">与主控相同</span>
+            <span className="agent-composer-role-menu-detail">{inheritedProviderLabel}</span>
+            {selectedProvider === null ? <Check className="size-3.5 shrink-0" aria-hidden="true" /> : null}
+          </button>
+        ) : null}
+        {availableProviders.map((entry) => {
+          const Icon = PROVIDER_ICONS[entry.id]
+          const selected = selectedProvider === entry.id
+          return (
+            <button
+              key={entry.id}
+              type="button"
+              className="agent-composer-menu-item"
+              aria-pressed={selected}
+              onClick={() => selectProvider(entry.id)}
+            >
+              <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+              <span className="flex-1">{entry.label}</span>
+              {selected ? <Check className="size-3.5 shrink-0" aria-hidden="true" /> : null}
+            </button>
+          )
+        })}
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSubmit,
   onLayoutChange,
@@ -189,6 +281,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onListSkills,
   onVirtualCommand,
 }, forwardedRef) {
+  const promptBarVariant = useAppSettingsStore(
+    (store) => store.settings?.beautifulUi?.promptBar ?? DEFAULT_BEAUTIFUL_UI_PREFERENCES.promptBar,
+  )
   const {
     getDraft,
     setDraft,
@@ -207,16 +302,30 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   })
   const { composerChatId, providerSwitchPending, selectedProvider } = composer
   const providerPrefs = composer.effectiveState
+  const selectedProviderLabel = availableProviders.find((provider) => provider.id === selectedProvider)?.label ?? selectedProvider
   const collaborationEnabled = useChatPreferencesStore((state) => Boolean(state.collaborationByChatId[composerChatId]))
   const setChatCollaboration = useChatPreferencesStore((state) => state.setChatCollaboration)
+  const implementationProvider = useChatPreferencesStore((state) => state.implementationProviderByChatId[composerChatId] ?? null)
+  const setChatImplementationProvider = useChatPreferencesStore((state) => state.setChatImplementationProvider)
+  const clearChatImplementationProvider = useChatPreferencesStore((state) => state.clearChatImplementationProvider)
+  const reviewProvider = useChatPreferencesStore((state) => state.reviewProviderByChatId[composerChatId] ?? null)
+  const setChatReviewProvider = useChatPreferencesStore((state) => state.setChatReviewProvider)
+  const clearChatReviewProvider = useChatPreferencesStore((state) => state.clearChatReviewProvider)
+  const effectiveImplementationProvider = implementationProvider ?? selectedProvider
+  const effectiveReviewProvider = reviewProvider ?? selectedProvider
+  const implementationProviderLabel = availableProviders.find((provider) => provider.id === effectiveImplementationProvider)?.label ?? effectiveImplementationProvider
+  const reviewProviderLabel = availableProviders.find((provider) => provider.id === effectiveReviewProvider)?.label ?? effectiveReviewProvider
+  const collaborationProviders = availableProviders.filter((provider) => engineSupportsCollaboration(provider.id))
+  const implementationProviders = collaborationProviders.filter(
+    (provider) => provider.id !== selectedProvider || provider.id === implementationProvider,
+  )
+  const reviewProviders = collaborationProviders.filter(
+    (provider) => provider.id !== selectedProvider || provider.id === reviewProvider,
+  )
   const showModePicker = composer.supportsPlanMode
   const [value, setValue] = useState(() => (chatId ? getDraft(chatId) : ""))
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const isStandalone = useIsStandalone()
-  // Leading/trailing gutter *inside* the controls scroller, standing in for the
-  // horizontal padding its wrapper can't have. Standalone keeps the same 32px
-  // net inset the old wrapper produced (20px padding + 12px spacer).
-  const controlsScrollSpacer = cn("min-w-3", isStandalone && "min-w-8")
   const [attachments, setAttachments] = useState<ComposerAttachment[]>(() => hydrateComposerAttachments(chatId ? getAttachmentDrafts(chatId) : []))
   const [selectedAttachmentId, setSelectedAttachmentId] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -238,6 +347,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [skillMenuDismissed, setSkillMenuDismissed] = useState(false)
   // /model opens the composer's model picker popover (controlled InputPopover).
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const [plusMenuOpen, setPlusMenuOpen] = useState(false)
   // Offset from the BOTTOM of the rendered list (0 = best match, adjacent to the input).
   const [skillMenuOffset, setSkillMenuOffset] = useState(0)
   const skillsFetchRef = useRef<{ provider: AgentProvider | null; pending: boolean }>({ provider: null, pending: false })
@@ -379,6 +489,28 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     element.style.height = "auto"
     element.style.height = `${element.scrollHeight}px`
   }, [])
+
+  const openSkillPicker = useCallback(() => {
+    const textarea = textareaRef.current
+    const selectionStart = textarea?.selectionStart ?? value.length
+    const selectionEnd = textarea?.selectionEnd ?? selectionStart
+    const needsLeadingSpace = selectionStart > 0 && !/\s/.test(value[selectionStart - 1] ?? "")
+    const insertion = `${needsLeadingSpace ? " " : ""}/`
+    const nextValue = value.slice(0, selectionStart) + insertion + value.slice(selectionEnd)
+    const nextCaret = selectionStart + insertion.length
+    setValue(nextValue)
+    if (chatId) setDraft(chatId, nextValue)
+    setCaretPosition(nextCaret)
+    setSkillMenuDismissed(false)
+    requestAnimationFrame(() => {
+      const element = textareaRef.current
+      if (!element) return
+      element.focus()
+      element.selectionStart = nextCaret
+      element.selectionEnd = nextCaret
+      autoResize()
+    })
+  }, [autoResize, chatId, setDraft, value])
 
   const setTextareaRefs = useCallback((node: HTMLTextAreaElement | null) => {
     textareaRef.current = node
@@ -727,6 +859,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       autoPlan: showModePicker ? providerPrefs.autoPlan : false,
       attachments: attachmentsForSubmit,
       collaboration: engineSupportsCollaboration(selectedProvider) && collaborationEnabled,
+      implementationProvider: collaborationEnabled ? (implementationProvider ?? undefined) : undefined,
+      // 缺省由主引擎验收；显式选择后才临时切到另一个验收引擎。
+      reviewProvider: collaborationEnabled ? (reviewProvider ?? undefined) : undefined,
     }
     setValue("")
     if (chatId) clearDraft(chatId)
@@ -919,138 +1054,370 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               ))}
             </div>
           ) : null}
-          {attachments.length > 0 ? (
-            <ScrollArea className="overflow-x-auto overflow-y-hidden whitespace-nowrap px-2 pb-2">
-              <div className="flex items-end gap-2 pt-2">
-                {orderedAttachments.map((attachment) => (
-                  <div
-                    key={attachment.id}
-                    className={cn("flex shrink-0 flex-col justify-end", attachment.status === "failed" && "text-destructive")}
-                  >
-                    {attachment.kind === "image" ? (
-                      <AttachmentImageCard
-                        attachment={attachment}
-                        previewUrl={attachment.previewUrl}
-                        size="composer"
-                        onClick={attachment.status === "uploaded" ? () => handleAttachmentPreview(attachment) : undefined}
-                        onRemove={() => removeAttachment(attachment)}
-                      />
-                    ) : (
-                      <AttachmentFileCard
-                        attachment={attachment}
-                        onClick={attachment.status === "uploaded" ? () => handleAttachmentPreview(attachment) : undefined}
-                        onRemove={() => removeAttachment(attachment)}
-                      />
-                    )}
-                  </div>
-                ))}
-              </div>
-            </ScrollArea>
-          ) : null}
-
-          <div className="relative isolate mx-auto flex max-w-[840px] flex-col overflow-hidden rounded-[14px] border border-line bg-surface p-1.5 shadow-card transition-[border-color] duration-150 focus-within:border-line-strong">
-            <div className="grid grid-cols-[28px_minmax(0,1fr)_auto_28px_28px] items-end gap-1">
-              <label
-                aria-label="添加附件"
-                className={cn(
-                  "relative flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-[8px] text-ink-3 transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-ink active:scale-[0.94]",
-                  disabled && "pointer-events-none opacity-70",
-                )}
+          <PromptBarSurface className="mx-auto max-w-[840px]" optimizing={optimizingPrompt} variant={promptBarVariant}>
+            {collaborationEnabled && engineSupportsCollaboration(selectedProvider) ? (
+              <div
+                className="agent-composer-collaboration-route"
+                role="group"
+                aria-label={`协作链路：主控 ${selectedProviderLabel}，实现 ${implementationProviderLabel}，验收 ${reviewProviderLabel}`}
               >
-                <Paperclip className="h-4 w-4" />
-                <input
-                  type="file"
-                  multiple
-                  disabled={disabled}
-                  aria-label="添加附件"
-                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                  onChange={(event) => {
-                    const files = [...(event.target.files ?? [])]
-                    if (files.length > 0) enqueueFiles(files)
-                    event.target.value = ""
+                <Button
+                  type="button"
+                  variant="none"
+                  size="none"
+                  className="agent-composer-route-heading"
+                  onClick={() => setPlusMenuOpen(true)}
+                  aria-label="打开协作链路设置"
+                  title="打开协作链路设置"
+                >
+                  <ListChecks className="size-3.5 shrink-0" aria-hidden="true" />
+                  <span className="agent-composer-route-label">协作链路</span>
+                </Button>
+                <CollaborationRolePicker
+                  roleLabel="主控"
+                  provider={selectedProvider}
+                  providerLabel={selectedProviderLabel}
+                  availableProviders={collaborationProviders}
+                  selectedProvider={selectedProvider}
+                  disabled={providerSwitchPending}
+                  onSelectProvider={(provider) => {
+                    if (provider) composer.selectProvider(provider)
                   }}
                 />
-              </label>
-              <Textarea
-                ref={setTextareaRefs}
-                placeholder={placeholder}
-                value={value}
-                autoFocus
-                {...{ [CHAT_INPUT_ATTRIBUTE]: "" }}
-                rows={1}
-                onChange={(event) => {
-                  setValue(event.target.value)
-                  setCaretPosition(event.target.selectionStart ?? event.target.value.length)
-                  if (chatId) setDraft(chatId, event.target.value)
-                  autoResize()
-                }}
-                onSelect={(event) => {
-                  setCaretPosition(event.currentTarget.selectionStart ?? 0)
-                }}
-                onPaste={handlePaste}
-                onKeyDown={handleKeyDown}
-                disabled={disabled}
-                className="min-h-7 min-w-0 w-full resize-none bg-transparent px-1 py-[5px] text-[13px] leading-[18px] text-ink outline-none [overflow-wrap:anywhere] placeholder:text-ink-3 max-h-[200px] border-0 shadow-none"
-              />
-              <button
-                type="button"
-                aria-label="Choose model"
-                aria-expanded={modelPickerOpen}
-                onClick={() => setModelPickerOpen((current) => !current)}
-                className="flex h-7 shrink-0 items-center gap-1 rounded-[8px] px-1.5 text-[12px] font-medium text-ink-2 transition-colors duration-150 hover:bg-hover hover:text-ink"
-              >
-                <span className="max-w-28 truncate">
-                  {resolveModelLabel(
-                    availableProviders.find((provider) => provider.id === selectedProvider)?.models ?? [],
-                    providerPrefs.model,
+                <ArrowRight className="agent-composer-route-arrow" aria-hidden="true" />
+                <CollaborationRolePicker
+                  roleLabel="实现"
+                  provider={effectiveImplementationProvider}
+                  providerLabel={implementationProviderLabel}
+                  availableProviders={implementationProviders}
+                  selectedProvider={implementationProvider}
+                  inheritedProviderLabel={selectedProviderLabel}
+                  onSelectProvider={(provider) => {
+                    if (provider) setChatImplementationProvider(composerChatId, provider)
+                    else clearChatImplementationProvider(composerChatId)
+                  }}
+                />
+                <ArrowRight className="agent-composer-route-arrow" aria-hidden="true" />
+                <CollaborationRolePicker
+                  roleLabel="验收"
+                  provider={effectiveReviewProvider}
+                  providerLabel={reviewProviderLabel}
+                  availableProviders={reviewProviders}
+                  selectedProvider={reviewProvider}
+                  inheritedProviderLabel={selectedProviderLabel}
+                  onSelectProvider={(provider) => {
+                    if (provider) setChatReviewProvider(composerChatId, provider)
+                    else clearChatReviewProvider(composerChatId)
+                  }}
+                />
+              </div>
+            ) : null}
+            {attachments.length > 0 ? (
+              <ScrollArea className="max-w-full overflow-x-auto overflow-y-hidden whitespace-nowrap">
+                <div className="flex items-center gap-1.5 pb-1">
+                  {orderedAttachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className={cn("agent-composer-chip", attachment.status === "failed" && "text-destructive")}
+                    >
+                      <button
+                        type="button"
+                        className="flex min-w-0 items-center gap-1.5"
+                        onClick={attachment.status === "uploaded" ? () => handleAttachmentPreview(attachment) : undefined}
+                        disabled={attachment.status !== "uploaded"}
+                      >
+                        {attachment.kind === "image" && attachment.previewUrl ? (
+                          <img src={attachment.previewUrl} alt="" className="size-4 rounded-[4px] object-cover" />
+                        ) : attachment.kind === "image" ? (
+                          <FileImage className="size-3.5 text-ink-3" />
+                        ) : (
+                          <FileText className="size-3.5 text-ink-3" />
+                        )}
+                        <span className="max-w-40 truncate">{attachment.displayName}</span>
+                        {attachment.status === "uploading" ? <Loader2 className="size-3 animate-spin text-ink-3" /> : null}
+                      </button>
+                      <button
+                        type="button"
+                        className="agent-composer-chip-remove"
+                        onClick={() => removeAttachment(attachment)}
+                        aria-label={`Remove ${attachment.displayName}`}
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            ) : null}
+
+            <Textarea
+              ref={setTextareaRefs}
+              placeholder={placeholder}
+              value={value}
+              autoFocus
+              {...{ [CHAT_INPUT_ATTRIBUTE]: "" }}
+              rows={1}
+              onChange={(event) => {
+                setValue(event.target.value)
+                setCaretPosition(event.target.selectionStart ?? event.target.value.length)
+                if (chatId) setDraft(chatId, event.target.value)
+                autoResize()
+              }}
+              onSelect={(event) => {
+                setCaretPosition(event.currentTarget.selectionStart ?? 0)
+              }}
+              onPaste={handlePaste}
+              onKeyDown={handleKeyDown}
+              disabled={disabled}
+              className={cn(
+                "agent-composer-field min-w-0 w-full resize-none border-0 bg-transparent shadow-none outline-none",
+                optimizingPrompt && "agent-composer-field-enhancing",
+              )}
+            />
+
+            <div className="agent-composer-toolbar">
+              <div className="flex min-w-0 flex-1 items-center gap-1">
+                <Popover open={plusMenuOpen} onOpenChange={setPlusMenuOpen}>
+                  <PopoverTrigger asChild>
+                    <button
+                      type="button"
+                      aria-label="添加附件或选择能力"
+                      className={cn("agent-composer-icon-button", disabled && "pointer-events-none opacity-50")}
+                      title="添加附件或选择能力"
+                      disabled={disabled}
+                    >
+                      <Plus className={cn("size-3.5 transition-transform duration-200", plusMenuOpen && "rotate-45")} />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent side="top" align="start" sideOffset={6} className="agent-composer-plus-menu">
+                    <button
+                      type="button"
+                      className="agent-composer-menu-item"
+                      onClick={() => {
+                        setPlusMenuOpen(false)
+                        requestAnimationFrame(() => paletteFileInputRef.current?.click())
+                      }}
+                    >
+                      <Paperclip className="size-3.5" />
+                      <span>添加附件</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="agent-composer-menu-item"
+                      onClick={() => {
+                        setPlusMenuOpen(false)
+                        requestAnimationFrame(() => setModelPickerOpen(true))
+                      }}
+                    >
+                      <Box className="size-3.5" />
+                      <span>选择模型</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="agent-composer-menu-item"
+                      disabled={!onListSkills}
+                      onClick={() => {
+                        setPlusMenuOpen(false)
+                        openSkillPicker()
+                      }}
+                    >
+                      <WandSparkles className="size-3.5" />
+                      <span>添加技能</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="agent-composer-menu-item"
+                      disabled={!hasTextToSend || optimizingPrompt}
+                      onClick={() => {
+                        setPlusMenuOpen(false)
+                        void handleOptimizePrompt()
+                      }}
+                    >
+                      {optimizingPrompt ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+                      <span>优化提示词</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="agent-composer-menu-item"
+                      disabled={!engineSupportsCollaboration(selectedProvider)}
+                      aria-pressed={collaborationEnabled}
+                      onClick={() => {
+                        setChatCollaboration(composerChatId, !collaborationEnabled)
+                        setPlusMenuOpen(false)
+                      }}
+                    >
+                      <ListChecks className="size-3.5" />
+                      <span className="flex-1">协作模式</span>
+                      <span className="agent-composer-menu-status">{collaborationEnabled ? "开" : "关"}</span>
+                    </button>
+                    {collaborationEnabled && engineSupportsCollaboration(selectedProvider) ? (
+                      <div className="agent-composer-review-picker">
+                        <div className="agent-composer-collaboration-role">
+                          <span className="agent-composer-review-picker-label">主控引擎</span>
+                          <div className="flex flex-wrap gap-1">
+                            {collaborationProviders.map((provider) => {
+                              const Icon = PROVIDER_ICONS[provider.id]
+                              return (
+                                <button
+                                  key={provider.id}
+                                  type="button"
+                                  aria-pressed={selectedProvider === provider.id}
+                                  disabled={providerSwitchPending}
+                                  onClick={() => composer.selectProvider(provider.id)}
+                                  className="agent-composer-review-chip"
+                                >
+                                  <Icon className="size-3" />
+                                  {provider.label}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                        <div className="agent-composer-collaboration-role">
+                          <span className="agent-composer-review-picker-label">实现引擎</span>
+                          <div className="flex flex-wrap gap-1">
+                            <button
+                              type="button"
+                              aria-pressed={implementationProvider === null}
+                              onClick={() => clearChatImplementationProvider(composerChatId)}
+                              className="agent-composer-review-chip"
+                            >
+                              与主控相同（{selectedProviderLabel}）
+                            </button>
+                            {implementationProviders.map((provider) => {
+                              const Icon = PROVIDER_ICONS[provider.id]
+                              return (
+                                <button
+                                  key={provider.id}
+                                  type="button"
+                                  aria-pressed={implementationProvider === provider.id}
+                                  onClick={() => setChatImplementationProvider(composerChatId, provider.id)}
+                                  className="agent-composer-review-chip"
+                                >
+                                  <Icon className="size-3" />
+                                  {provider.label}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                        <div className="agent-composer-collaboration-role">
+                          <span className="agent-composer-review-picker-label">验收引擎</span>
+                          <div className="flex flex-wrap gap-1">
+                            <button
+                              type="button"
+                              aria-pressed={reviewProvider === null}
+                              onClick={() => clearChatReviewProvider(composerChatId)}
+                              className="agent-composer-review-chip"
+                            >
+                              与主控相同（{selectedProviderLabel}）
+                            </button>
+                            {reviewProviders.map((provider) => {
+                              const Icon = PROVIDER_ICONS[provider.id]
+                              return (
+                                <button
+                                  key={provider.id}
+                                  type="button"
+                                  aria-pressed={reviewProvider === provider.id}
+                                  onClick={() => setChatReviewProvider(composerChatId, provider.id)}
+                                  className="agent-composer-review-chip"
+                                >
+                                  <Icon className="size-3" />
+                                  {provider.label}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+                  </PopoverContent>
+                </Popover>
+
+                <div className="agent-composer-preferences min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  <ChatPreferenceControls
+                    availableProviders={availableProviders}
+                    selectedProvider={selectedProvider}
+                    providerSwitchPending={providerSwitchPending}
+                    model={providerPrefs.model}
+                    modelOptions={providerPrefs.modelOptions}
+                    onProviderChange={(provider) => composer.selectProvider(provider)}
+                    onModelChange={(_, model) => {
+                      composer.selectModel(model)
+                    }}
+                    onModelOptionChange={(change) => {
+                      switch (change.type) {
+                        case "claudeReasoningEffort":
+                        case "codexReasoningEffort":
+                        case "piReasoningEffort":
+                        case "deepseekReasoningEffort":
+                          composer.setReasoningEffort(change.effort)
+                          break
+                        case "contextWindow":
+                          composer.setContextWindow(change.contextWindow)
+                          break
+                        case "fastMode":
+                          composer.setFastMode(change.fastMode)
+                          break
+                      }
+                    }}
+                    onEditModels={onEditModels}
+                    modelPickerOpen={modelPickerOpen}
+                    onModelPickerOpenChange={setModelPickerOpen}
+                    mode={chatModeFromFlags(providerPrefs.planMode, providerPrefs.autoPlan)}
+                    onModeChange={setEffectiveMode}
+                    includeMode={showModePicker}
+                    className="agent-composer-preference-controls"
+                  />
+                </div>
+              </div>
+
+              <div className="agent-composer-actions flex shrink-0 items-center gap-1.5">
+                {activeContextWindow ? <div className="agent-composer-context"><ContextWindowMeter usage={activeContextWindow} /></div> : null}
+                {(hasTextToSend || optimizingPrompt) ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleOptimizePrompt()}
+                    disabled={disabled || optimizingPrompt}
+                    className="agent-composer-enhance"
+                    title={optimizingPrompt ? "正在优化…" : "优化提示词"}
+                    aria-label="优化提示词"
+                  >
+                    {optimizingPrompt ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+                    <span>{optimizingPrompt ? "优化中" : "优化"}</span>
+                  </button>
+                ) : null}
+                <Button
+                  type="button"
+                  onPointerDown={(event) => {
+                    event.preventDefault()
+                    if (!disabled && hasTextToSend && !hasPendingUploads) {
+                      void handleSubmit()
+                    } else if (canCancel) {
+                      onCancel?.()
+                    } else if (!disabled && canSubmit && !hasPendingUploads) {
+                      void handleSubmit()
+                    }
+                  }}
+                  disabled={disabled || (!canCancel && !canSubmit) || hasPendingUploads}
+                  size="icon"
+                  aria-label={canCancel && !hasTextToSend ? "停止" : "发送"}
+                  className={cn(
+                    "agent-composer-send",
+                    (hasTextToSend || canCancel || canSubmit) && "agent-composer-send-active",
                   )}
-                </span>
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className="text-ink-3">
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-              </button>
-              <Button
-                type="button"
-                onClick={() => void handleOptimizePrompt()}
-                disabled={disabled || !hasTextToSend || optimizingPrompt}
-                variant="ghost"
-                size="icon"
-                title={optimizingPrompt ? "正在优化…" : "优化提示词"}
-                aria-label="优化提示词"
-                className="flex size-7 shrink-0 items-center justify-center rounded-[8px] text-ink-3 hover:bg-hover hover:text-ink"
-              >
-                {optimizingPrompt ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Sparkles className="h-4 w-4" />
-                )}
-              </Button>
-              <Button
-                type="button"
-                onPointerDown={(event) => {
-                  event.preventDefault()
-                  if (!disabled && hasTextToSend && !hasPendingUploads) {
-                    void handleSubmit()
-                  } else if (canCancel) {
-                    onCancel?.()
-                  } else if (!disabled && canSubmit && !hasPendingUploads) {
-                    void handleSubmit()
-                  }
-                }}
-                disabled={disabled || (!canCancel && !canSubmit) || hasPendingUploads}
-                size="icon"
-                className="flex size-7 shrink-0 items-center justify-center rounded-full bg-ink text-canvas hover:opacity-90 disabled:opacity-50"
-              >
-                {hasTextToSend ? (
-                  <ArrowUp className="h-4 w-4" />
-                ) : canCancel ? (
-                  <div className="h-2.5 w-2.5 rounded-xs bg-current" />
-                ) : (
-                  <ArrowUp className="h-4 w-4" />
-                )}
-              </Button>
+                >
+                  {hasTextToSend ? (
+                    <ArrowUp className="size-3.5" />
+                  ) : canCancel ? (
+                    <div className="size-2 rounded-[2px] bg-current" />
+                  ) : (
+                    <ArrowUp className="size-3.5" />
+                  )}
+                </Button>
+              </div>
             </div>
-          </div>
+          </PromptBarSurface>
         </div>
 
         {uploadError ? (
@@ -1082,96 +1449,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           event.target.value = ""
         }}
       />
-
-      {/*
-        Vertical padding only: horizontal padding here would clip the scroller
-        and stop the controls row from bleeding to the screen edge. The inset is
-        applied as leading/trailing spacers *inside* the scroller instead (see
-        controlsScrollSpacer), so the net gutter is unchanged but content can
-        scroll under the edge.
-      */}
-      <div className={cn("relative pt-2 pb-2 max-w-[840px] mx-auto", isStandalone && "pt-3 pb-4")}>
-        <div className="overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden flex flex-row">
-          <div className={controlsScrollSpacer} />
-          <label
-            aria-label="添加附件"
-            className={cn(
-              "relative md:hidden shrink-0 self-center overflow-hidden mr-0.5 cursor-pointer",
-              "flex items-center gap-1.5 px-2 py-1 text-sm rounded-md transition-colors text-muted-foreground [&>svg]:shrink-0 [&>span]:whitespace-nowrap hover:bg-muted/50",
-              disabled && "pointer-events-none opacity-70",
-            )}
-          >
-            <Paperclip className="h-3.5 w-3.5" />
-            <span>附件</span>
-            <input
-              type="file"
-              multiple
-              disabled={disabled}
-              aria-label="添加附件"
-              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-              onChange={(event) => {
-                const files = [...(event.target.files ?? [])]
-                if (files.length > 0) {
-                  enqueueFiles(files)
-                }
-                event.target.value = ""
-              }}
-            />
-          </label>
-          <ChatPreferenceControls
-            availableProviders={availableProviders}
-            selectedProvider={selectedProvider}
-            providerSwitchPending={providerSwitchPending}
-            model={providerPrefs.model}
-            modelOptions={providerPrefs.modelOptions}
-            onProviderChange={(provider) => composer.selectProvider(provider)}
-            onModelChange={(_, model) => {
-              composer.selectModel(model)
-            }}
-            onModelOptionChange={(change) => {
-              switch (change.type) {
-                case "claudeReasoningEffort":
-                case "codexReasoningEffort":
-                case "piReasoningEffort":
-                case "deepseekReasoningEffort":
-                  composer.setReasoningEffort(change.effort)
-                  break
-                case "contextWindow":
-                  composer.setContextWindow(change.contextWindow)
-                  break
-                case "fastMode":
-                  composer.setFastMode(change.fastMode)
-                  break
-              }
-            }}
-            onEditModels={onEditModels}
-            modelPickerOpen={modelPickerOpen}
-            onModelPickerOpenChange={setModelPickerOpen}
-            mode={chatModeFromFlags(providerPrefs.planMode, providerPrefs.autoPlan)}
-            onModeChange={setEffectiveMode}
-            includeMode={showModePicker}
-            className="max-w-[840px] mx-auto"
-          />
-          {activeContextWindow ? (
-            <div className="flex items-center md:hidden mx-[13px]">
-              <ContextWindowMeter usage={activeContextWindow} />
-            </div>
-          ) : null}
-          <div className={controlsScrollSpacer} />
-        </div>
-
-        {activeContextWindow ? (
-          <div className="absolute right-[29px] top-1/2 translate-x-1/2 -translate-y-1/2 hidden md:block">
-            <ContextWindowMeter usage={activeContextWindow} />
-          </div>
-        ) : null}
-
-        <CollaborationCoach
-          provider={selectedProvider}
-          enabled={collaborationEnabled}
-          onChange={(enabled) => setChatCollaboration(composerChatId, enabled)}
-        />
-      </div>
 
       <AttachmentPreviewModal attachment={selectedAttachment} onOpenChange={(open) => !open && setSelectedAttachmentId(null)} />
     </div>

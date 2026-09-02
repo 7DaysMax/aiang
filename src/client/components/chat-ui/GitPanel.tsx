@@ -25,6 +25,7 @@ import { CommitHistoryRow } from "./git/CommitHistoryRow"
 import { DiffFileCard, type DiffFileActions } from "./git/DiffFileCard"
 import { GitHubPublishModal } from "./git/GitHubPublishModal"
 import { IconButton, StageCheckbox, type DiffRenderMode } from "./git/shared"
+import { ProjectRecordsTable } from "@/components/primitives/RecordsTable"
 
 export { canIgnoreDiffFile, canIgnoreDiffFolder, shouldLoadDiffPatchNow } from "./git/DiffFileCard"
 export type { DiffFileActions } from "./git/DiffFileCard"
@@ -145,6 +146,7 @@ function GitPanelImpl({
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const patchDigestsByPathRef = useRef<Record<string, string>>({})
   const [visibleFileCount, setVisibleFileCount] = useState(INITIAL_VISIBLE_DIFF_FILE_COUNT)
+  const [fileLayout, setFileLayout] = useState<"cards" | "records">("cards")
   const filePaths = useMemo(() => diffs.files.map((file) => file.path), [diffs.files])
   const filePathsKey = useMemo(() => filePaths.join("\u0000"), [filePaths])
   const viewMode = useRightSidebarStore((store) => (projectId ? (store.projectUi[projectId]?.viewMode ?? (hasChanges ? "changes" : "history")) : (hasChanges ? "changes" : "history")))
@@ -674,17 +676,24 @@ function GitPanelImpl({
                 <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 top-1/2 -translate-y-1/2">
                   <div className="pointer-events-auto">
                     <SegmentedControl
-                      value={effectiveViewMode}
+                      value={fileLayout === "records" && effectiveViewMode === "changes" ? "records" : effectiveViewMode}
                       onValueChange={(value) => {
                         if (!projectId) return
+                        if (value === "records") {
+                          setFileLayout("records")
+                          setViewMode(projectId, "changes")
+                          return
+                        }
+                        setFileLayout("cards")
                         setViewMode(projectId, value as SidebarViewMode)
                       }}
                       size="sm"
                       optionClassName="flex-1 justify-center"
                       options={isSnapshotMode
-                        ? [{ value: "changes", label: "改动" }]
+                        ? [{ value: "changes", label: "改动" }, { value: "records", label: "文件表" }]
                         : [
                             { value: "changes", label: "改动"},
+                            { value: "records", label: "文件表" },
                             { value: "history", label: "历史" },
                           ]}
                     />
@@ -750,6 +759,8 @@ function GitPanelImpl({
                     <div className="flex h-full items-center justify-center px-6 py-3 text-center">
                       <p className="text-sm text-muted-foreground">暂无文件改动。</p>
                     </div>
+                  ) : fileLayout === "records" ? (
+                    <div className="overflow-x-auto p-3"><ProjectRecordsTable rows={diffs.files.map((file) => ({ ...file, selected: isDiffPathChecked(diffCommitSelection, file.path) }))} onToggle={(path, selected) => projectId && setCheckedPath(projectId, path, selected)} onOpen={onOpenFile} /></div>
                   ) : diffFilesList}
                 </div>
               </div>
@@ -767,6 +778,8 @@ function GitPanelImpl({
               <div className="flex h-full items-center justify-center px-6 py-3 text-center">
                 <p className="text-sm text-muted-foreground">暂无文件改动。</p>
               </div>
+            ) : fileLayout === "records" ? (
+              <div className="overflow-x-auto p-3"><ProjectRecordsTable rows={diffs.files.map((file) => ({ ...file, selected: isDiffPathChecked(diffCommitSelection, file.path) }))} onToggle={(path, selected) => projectId && setCheckedPath(projectId, path, selected)} onOpen={onOpenFile} /></div>
             ) : diffFilesList}
           </div>
 

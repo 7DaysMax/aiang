@@ -532,6 +532,9 @@ export class PiAgentManager {
     let turnCostUsd = 0
     let lastError: string | null = null
     let aborted = false
+    // Set synchronously by interrupt() so the prompt's rejection (abort throws
+    // an engine diagnostic) is treated as a cancel, not as a turn error.
+    let interruptedByUser = false
     let cancelWatchdog = scheduleTurnWatchdog({
       durationMs: PI_MAX_TURN_DURATION_MS,
       onExpire: () => {
@@ -825,6 +828,10 @@ export class PiAgentManager {
         }
       })
       .catch((error) => {
+        if (interruptedByUser || aborted) {
+          finalize({ isError: false, message: "", cancelled: true })
+          return
+        }
         const message = error instanceof Error ? error.message : String(error)
         finalize({ isError: true, message })
       })
@@ -833,6 +840,7 @@ export class PiAgentManager {
       provider: "pi",
       stream: queue,
       interrupt: async () => {
+        interruptedByUser = true
         await session.abort()
       },
       // The AgentSession stays alive across turns (it's reused by the next

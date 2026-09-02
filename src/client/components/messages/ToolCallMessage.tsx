@@ -1,7 +1,7 @@
 import { useMemo } from "react"
 import type { ProcessedToolCall } from "./types"
 import { useToolPayloadPrefetch } from "./tool-payload-context"
-import { ToolChipRow } from "../bui/ToolChipRow"
+import { LiveToolChipRow } from "@/components/primitives/ToolChips"
 import { getToolChipPresentation } from "./toolChipPresentation"
 
 interface Props {
@@ -43,7 +43,7 @@ export function ToolCallMessage({ message, isLoading = false }: Props) {
 
   return (
     <div className="w-full" onPointerEnter={prefetchOwnPayloads}>
-      <ToolChipRow
+      <LiveToolChipRow
         icon={presentation.icon}
         label={presentation.label}
         chip={presentation.chip}

@@ -20,6 +20,11 @@ const UNUSED_PUBLIC_ENTRIES = [
 
 export default defineConfig({
   root: path.resolve(import.meta.dirname, "src/export-viewer"),
+  resolve: {
+    alias: {
+      "@": path.resolve(import.meta.dirname, "src"),
+    },
+  },
   plugins: [
     react(),
     {

@@ -2,7 +2,7 @@
 /**
  * Aiang 识图 MCP server（stdio，无第三方依赖）。
  *
- * DeepSeek V4 是文本模型，看不懂图片。这个 server 给各 agent 引擎
+ * Youmi 当前的图片附件链路使用独立视觉服务。这个 server 给各 agent 引擎
  * （ccb / codex / reasonix）暴露两个工具：
  *   - describe_image：读已有的图片文件，转成文字描述
  *   - capture_screen：截取当前屏幕，直接返回视觉模型的描述

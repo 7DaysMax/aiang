@@ -122,7 +122,7 @@ describe("trimTrailingPastedNewlines", () => {
 })
 
 describe("ChatInput", () => {
-  test("renders the mobile attachment trigger as a native file input target in the controls row", () => {
+  test("renders the unified capability trigger and hidden attachment input", () => {
     const html = renderToStaticMarkup(createElement(ChatInput, {
       onSubmit: async () => undefined,
       disabled: false,
@@ -131,12 +131,10 @@ describe("ChatInput", () => {
       availableProviders: PROVIDERS,
     }))
 
-    expect(html).toContain('aria-label="添加附件"')
+    expect(html).toContain('aria-label="添加附件或选择能力"')
     expect(html).toContain('type="file"')
-    expect(html).toContain("absolute inset-0 h-full w-full cursor-pointer opacity-0")
-    expect(html.indexOf('aria-label="添加附件"')).toBeGreaterThan(html.indexOf('placeholder="Build something..."'))
-    expect(html).not.toContain('type="file" multiple="" class="hidden"')
-    expect(html).toContain("协作验收")
-    expect(html).toContain("先动手，再自动验收")
+    expect(html).toContain('multiple="" aria-hidden="true" tabindex="-1" class="hidden"')
+    expect(html.indexOf('aria-label="添加附件或选择能力"')).toBeGreaterThan(html.indexOf('placeholder="输入消息，开始构建…"'))
+    expect(html).not.toContain("先动手，再自动验收")
   })
 })

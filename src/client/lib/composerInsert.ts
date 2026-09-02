@@ -32,12 +32,3 @@ export function extractAnswerSources(text: string): Array<{ name: string; href: 
   }
   return sources
 }
-
-export function suggestFollowUps(text: string): string[] {
-  const questions = text
-    .split(/\n+/)
-    .map((line) => line.trim().replace(/^[-*\d.)\s]+/, ""))
-    .filter((line) => line.length > 6 && line.length < 72 && /[?？]$/.test(line))
-  if (questions.length >= 1) return questions.slice(-2)
-  return ["继续完善这一点", "用更简单的方式解释"]
-}

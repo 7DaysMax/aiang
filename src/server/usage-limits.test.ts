@@ -183,7 +183,7 @@ describe("normalizeCodexRateLimits", () => {
     expect(snapshot.credits).toMatchObject({ label: "Credits", detail: "$4.20" })
   })
 
-  test("multiple limit buckets get suffixed labels", () => {
+  test("multiple limit buckets distinguish general and model-specific quotas", () => {
     const snapshot = normalizeCodexRateLimits(
       {
         rateLimitsByLimitId: {
@@ -193,7 +193,10 @@ describe("normalizeCodexRateLimits", () => {
       },
       NOW,
     )
-    expect(snapshot.windows.map((w) => w.label)).toEqual(["5-hour · All models", "5-hour · Fast lane"])
+    expect(snapshot.windows.map((w) => w.label)).toEqual([
+      "5-hour · General quota",
+      "5-hour · Model quota · Fast lane",
+    ])
   })
 
   test("model-id limit names run through the shared model-label formatter", () => {
@@ -207,8 +210,8 @@ describe("normalizeCodexRateLimits", () => {
       NOW,
     )
     expect(snapshot.windows.map((w) => w.label)).toEqual([
-      "Weekly · All models",
-      "Weekly · GPT 5.3 Codex Spark",
+      "Weekly · General quota",
+      "Weekly · Model quota · GPT 5.3 Codex Spark",
     ])
   })
 
@@ -371,7 +374,36 @@ describe("UsageLimitsManager", () => {
     const claude = manager.getSnapshot().providers.find((p) => p.provider === "claude")
     expect(claude?.windows).toHaveLength(1)
     expect(claude?.windows[0]?.usedPercent).toBe(42)
+    expect(claude?.status).toBe("unavailable")
+    expect(claude?.updatedAt).toBe(NOW)
     expect(claude?.detail).toContain("probe timed out")
+    manager.dispose()
+  })
+
+  test("provider refresh only reads the requested account", async () => {
+    const filePath = await createTempFilePath()
+    const reads = { deepseek: 0, claude: 0, codex: 0 }
+    const manager = new UsageLimitsManager(filePath, {
+      now: () => new Date(NOW),
+      fetchDeepSeekBalance: async () => {
+        reads.deepseek += 1
+        return { available: true, fetchedAt: NOW, currency: "CNY", totalBalance: "4.55" }
+      },
+      fetchClaudeUsage: async () => {
+        reads.claude += 1
+        return { rate_limits_available: true, rate_limits: { five_hour: { utilization: 1 } } }
+      },
+      fetchCodexRateLimits: async () => {
+        reads.codex += 1
+        return { rateLimits: { primary: { usedPercent: 1, windowDurationMins: 300 } } }
+      },
+    })
+    await manager.initialize()
+
+    await manager.refresh({ force: true, provider: "deepseek" })
+
+    expect(reads).toEqual({ deepseek: 1, claude: 0, codex: 0 })
+    expect(manager.getSnapshot().providers.find((provider) => provider.provider === "deepseek")?.status).toBe("ok")
     manager.dispose()
   })
 

@@ -1,3 +1,5 @@
+"use client";
+
 import { useEffect, useRef, useState } from "react";
 
 /* ─────────────────────────────────────────────────────────
@@ -7,16 +9,11 @@ import { useEffect, useRef, useState } from "react";
  * stays solid while streaming, then blinks once the text
  * settles. Inherits typography from its context, so it drops
  * into any text surface (Selection Actions, chat, etc.).
- *
- * `streaming` omitted: typewriter the whole string once (gallery).
- * `streaming={true}`: follow a growing server buffer — keep the
- * already-shown prefix, catch up the new suffix, never restart.
- * `streaming={false}`: snap to the full string and drop the blur.
  * ───────────────────────────────────────────────────────── */
 
 export function StreamText({
   text,
-  streaming,
+  live = false,
   charsPerTick = 2,
   tickMs = 9,
   blurTail = 6,
@@ -26,11 +23,8 @@ export function StreamText({
   onDone,
 }: {
   text: string;
-  /**
-   * Live token stream: true while the server is still appending.
-   * Omit to typewriter a finished string (Beautiful UI gallery).
-   */
-  streaming?: boolean;
+  /** Show text already delivered by a real stream; animate only the live edge. */
+  live?: boolean;
   /** characters revealed per tick — higher is faster */
   charsPerTick?: number;
   /** interval between reveals, ms */
@@ -45,43 +39,20 @@ export function StreamText({
   /** fires once the full string is shown */
   onDone?: () => void;
 }) {
-  const typewriter = streaming === undefined;
-  const [count, setCount] = useState(() => (typewriter ? 0 : text.length));
+  const [count, setCount] = useState(live ? text.length : 0);
   const onProgressRef = useRef(onProgress);
   const onDoneRef = useRef(onDone);
-  const textRef = useRef(text);
-  const countRef = useRef(count);
   onProgressRef.current = onProgress;
   onDoneRef.current = onDone;
-  countRef.current = count;
 
   useEffect(() => {
-    const previous = textRef.current;
-    textRef.current = text;
-
-    if (streaming === false) {
+    if (live) {
       setCount(text.length);
-      onDoneRef.current?.();
+      onProgressRef.current?.();
       return;
     }
-
-    let start = countRef.current;
-    if (typewriter) {
-      start = 0;
-    } else if (text.startsWith(previous) || previous.startsWith(text)) {
-      start = Math.min(countRef.current, text.length);
-    } else {
-      start = Math.max(0, text.length - Math.max(blurTail * 2, 12));
-    }
-
-    if (start >= text.length) {
-      setCount(text.length);
-      onDoneRef.current?.();
-      return;
-    }
-
-    setCount(start);
-    let i = start;
+    setCount(0);
+    let i = 0;
     const id = setInterval(() => {
       i = Math.min(i + charsPerTick, text.length);
       setCount(i);
@@ -92,11 +63,11 @@ export function StreamText({
       }
     }, tickMs);
     return () => clearInterval(id);
-  }, [text, charsPerTick, tickMs, streaming, blurTail, typewriter]);
+  }, [text, charsPerTick, live, tickMs]);
 
-  const live = streaming === true || (typewriter && count < text.length);
+  const streaming = live || count < text.length;
   const shown = text.slice(0, count);
-  const split = live ? Math.max(0, shown.length - blurTail) : shown.length;
+  const split = streaming ? Math.max(0, shown.length - blurTail) : shown.length;
 
   return (
     <span className={className}>
@@ -104,10 +75,10 @@ export function StreamText({
       {split < shown.length && (
         <span className="stream-tail">{shown.slice(split)}</span>
       )}
-      {caret && (live || typewriter) && (
+      {caret && (
         <span
           aria-hidden
-          className={`stream-caret${live ? " is-streaming" : ""}`}
+          className={`stream-caret${streaming ? " is-streaming" : ""}`}
         />
       )}
     </span>

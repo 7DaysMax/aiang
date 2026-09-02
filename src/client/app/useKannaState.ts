@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useShallow } from "zustand/react/shallow"
-import { PROVIDERS, type AgentProvider, type AppSettingsPatch, type AskUserQuestionAnswerMap, type AppSettingsSnapshot, type ChatDiffSnapshot, type FaveModel, type KeybindingsSnapshot, type LlmProviderSnapshot, type LlmProviderValidationResult, type ModelOptions, type ProviderCatalogEntry, type QueuedChatMessage, type StandaloneTranscriptExportCommandResult, type TranscriptEntry, type UpdateSnapshot } from "../../shared/types"
+import { PROVIDERS, type AppSettingsPatch, type AskUserQuestionAnswerMap, type AppSettingsSnapshot, type ChatDiffSnapshot, type FaveModel, type KeybindingsSnapshot, type LlmProviderSnapshot, type LlmProviderValidationResult, type ProviderCatalogEntry, type QueuedChatMessage, type StandaloneTranscriptExportCommandResult, type TranscriptEntry, type UpdateSnapshot } from "../../shared/types"
 import { NEW_CHAT_COMPOSER_ID, useChatPreferencesStore } from "../stores/chatPreferencesStore"
 import { useRightSidebarStore } from "../stores/rightSidebarStore"
 import { useTerminalLayoutStore } from "../stores/terminalLayoutStore"
@@ -47,7 +47,7 @@ import { KannaSocket, type SocketStatus } from "./socket"
 import { useAppSettingsSync } from "./useAppSettingsSync"
 import { useChatCommands } from "./useChatCommands"
 import { useChatReadAnchor, type ChatReadAnchorState } from "./useChatReadAnchor"
-import { useSendMessage } from "./useSendMessage"
+import { useSendMessage, type SendMessageOptions } from "./useSendMessage"
 import { useShareExport } from "./useShareExport"
 import { useUpdateRestart } from "./useUpdateRestart"
 import type { EditorOpenSettings, OpenExternalAction } from "../../shared/protocol"
@@ -83,6 +83,15 @@ const EMPTY_TRANSCRIPT_ENTRIES: TranscriptEntry[] = []
 
 function sameOriginWsUrl() {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
+  const devBackendPort = (import.meta as ImportMeta & {
+    env?: { VITE_AIANG_DEV_BACKEND_PORT?: string }
+  }).env?.VITE_AIANG_DEV_BACKEND_PORT?.trim()
+  if (devBackendPort) {
+    // Vite's HTTP proxy remains useful for API calls, but its WebSocket
+    // upgrade can stall with Bun. The dev server injects the actual backend
+    // port so local pages connect to the agent socket directly.
+    return `${protocol}//${window.location.hostname}:${devBackendPort}/ws`
+  }
   return `${protocol}//${window.location.host}/ws`
 }
 
@@ -204,7 +213,7 @@ export interface KannaState {
   handleWriteFaveModels: (faveModels: FaveModel[]) => Promise<void>
   handleValidateLlmProvider: (value: Pick<LlmProviderSnapshot, "provider" | "apiKey" | "model" | "baseUrl">) => Promise<LlmProviderValidationResult>
   handleSignOut: () => Promise<void>
-  handleSend: (content: string, options?: { provider?: AgentProvider; model?: string; modelOptions?: ModelOptions; planMode?: boolean; autoPlan?: boolean; collaboration?: boolean }) => Promise<void>
+  handleSend: (content: string, options?: SendMessageOptions) => Promise<void>
   handleSteerQueuedMessage: (queuedMessageId: string) => Promise<void>
   handleRemoveQueuedMessage: (queuedMessageId: string) => Promise<void>
   handleCancel: () => Promise<void>

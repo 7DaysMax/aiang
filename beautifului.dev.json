@@ -1,0 +1,68 @@
+{
+  "source": "https://www.beautifului.dev/",
+  "tokens": {
+    "spacing": {
+      "scale": [2, 4, 6, 8, 10, 12, 16, 24, 32, 40, 64],
+      "base_unit": 2
+    },
+    "typography": {
+      "families": ["Inter", "JetBrains Mono", "ui-monospace"],
+      "scale": [
+        { "role": "page-title", "size": "21px", "weight": "600", "family": "Inter" },
+        { "role": "section-title", "size": "13px", "weight": "600", "family": "Inter" },
+        { "role": "interface", "size": "12.5px", "weight": "500", "family": "Inter" },
+        { "role": "body", "size": "11.5px", "weight": "400", "family": "Inter" },
+        { "role": "data", "size": "10.5px", "weight": "400", "family": "JetBrains Mono" }
+      ]
+    },
+    "colors": [
+      { "role": "page", "value": "#1B1C1E" },
+      { "role": "surface", "value": "#232427" },
+      { "role": "field", "value": "#2B2C2F" },
+      { "role": "text-primary", "value": "#F2F3F4" },
+      { "role": "text-secondary", "value": "#A5A8AD" },
+      { "role": "text-muted", "value": "#6C6F75" },
+      { "role": "accent", "value": "#7EC0FF" }
+    ],
+    "radius": ["4px", "6px", "7px", "8px", "10px", "14px", "999px"],
+    "shadows": [
+      "0 0 0 1px oklch(1 0 0 / 0.11), 0 1px 2px oklch(0 0 0 / 0.2), 0 2px 6px oklch(0 0 0 / 0.2)",
+      "0 0 0 1px oklch(1 0 0 / 0.15), 0 8px 28px oklch(0 0 0 / 0.34)"
+    ],
+    "image_ratios": [
+      { "usage": "logo", "ratio": "0.98:1" },
+      { "usage": "source-avatar", "ratio": "1:1" }
+    ],
+    "grid": { "max_width": "960px", "columns": 2, "gutter": "32px", "template": "288px minmax(0, 672px)" }
+  },
+  "taste": [
+    {
+      "name": "Working specimen over marketing frame",
+      "trigger": "When presenting an interface primitive",
+      "decision": "Chose a live, centered interaction specimen over decorative product imagery",
+      "reason": "Builders need to judge state changes and density before they need persuasion",
+      "evidence": ["20 interactive component sections", "only logo and source-avatar imagery", "672px specimen column"]
+    },
+    {
+      "name": "Boundaries over floating layers",
+      "trigger": "When separating dense controls and data",
+      "decision": "Chose cool hairline rings and surface shifts over broad drop shadows",
+      "reason": "A flat tool surface lets state and content carry attention without making every control feel raised",
+      "evidence": ["#232427 surface", "#2B2C2F field", "1px light-alpha rings", "8px dominant radius"]
+    },
+    {
+      "name": "Compact comparison rhythm",
+      "trigger": "When fitting many component states into one catalogue",
+      "decision": "Chose an 11.5–13px interface scale on a 2px spacing base over large editorial type and wide pauses",
+      "reason": "People can compare more states without losing the label-to-control relationship",
+      "evidence": ["496 elements at 13px", "223 spacing values at 4px", "196 spacing values at 8px", "40px section padding"]
+    },
+    {
+      "name": "One cool signal",
+      "trigger": "When emphasis is needed across tools, status, and navigation",
+      "decision": "Chose one blue accent used on a small share of the surface over a multi-accent brand palette",
+      "reason": "A single signal remains meaningful when semantic green, orange, and red are already reserved for outcomes",
+      "evidence": ["#7EC0FF accent", "six dominant cool-neutral tokens", "accent absent from large background areas"]
+    }
+  ]
+}

@@ -121,7 +121,7 @@ export type ClientCommand =
   | { type: "settings.writeAppSettings"; analyticsEnabled: boolean }
   | { type: "settings.writeAppSettingsPatch"; patch: AppSettingsPatch }
   | { type: "settings.readLlmProvider" }
-  | { type: "usage.refresh"; force?: boolean }
+  | { type: "usage.refresh"; force?: boolean; provider?: AgentProvider }
   | { type: "auth.refresh"; force?: boolean }
   /** Install (or update to the latest version of) a service's CLI. */
   | { type: "auth.install"; service: AuthServiceId }
@@ -248,6 +248,10 @@ export type ClientCommand =
       planMode?: boolean
       autoPlan?: boolean
       collaboration?: boolean
+      /** 协作实现回合使用的引擎；缺省 = 主引擎。 */
+      implementationProvider?: AgentProvider
+      /** 协作验收回合使用的引擎；缺省 = 主引擎。 */
+      reviewProvider?: AgentProvider
     }
   | { type: "chat.refreshDiffs"; chatId: string }
   | { type: "chat.initGit"; chatId: string }
@@ -303,6 +307,8 @@ export type ClientCommand =
       planMode?: boolean
       autoPlan?: boolean
       collaboration?: boolean
+      implementationProvider?: AgentProvider
+      reviewProvider?: AgentProvider
     }
   | {
       type: "message.steer"

@@ -196,6 +196,8 @@ export interface QueuedChatMessage {
   planMode?: boolean
   autoPlan?: boolean
   collaboration?: boolean
+  implementationProvider?: AgentProvider
+  reviewProvider?: AgentProvider
 }
 
 export interface ProviderModelOption {
@@ -399,6 +401,9 @@ export const DEFAULT_CODEX_MODEL_OPTIONS = {
   reasoningEffort: "high",
   fastMode: false,
 } as const satisfies CodexModelOptions
+
+/** Cold-start fallback; the live Codex catalog replaces this from `model/list`. */
+export const DEFAULT_CODEX_MODEL = "gpt-5.6-sol"
 
 export const DEFAULT_CURSOR_MODEL_OPTIONS = {
   fastMode: false,
@@ -661,40 +666,91 @@ export const PROVIDERS: ProviderCatalogEntry[] = [
         defaultReasoningEffort: "high",
         supportsFastMode: false,
       },
+      {
+        id: "deepseek-v4-flash-vision-exp",
+        label: "DeepSeek Flash Vision (Exp)",
+        supportsEffort: true,
+        supportedReasoningEfforts: DEEPSEEK_REASONING_OPTIONS,
+        defaultReasoningEffort: "high",
+        supportsFastMode: false,
+      },
     ],
     efforts: [...CLAUDE_REASONING_OPTIONS],
   },
   {
     id: "codex",
-    // Codex 引擎（codex app-server）驱动本机 codex CLI，该 CLI 通过
-    // ~/.codex/config.toml 的 custom provider 指向 DeepSeek V4 官方 API，
-    // 因此模型目录与 DeepSeek 官方一致，思考档位走官方 low/high/max。
+    // Codex 引擎驱动本机官方 codex app-server。这些是冷启动
+    // fallback；服务端启动后会用当前账号的 `model/list` 实时替换。
     label: "Codex",
-    defaultModel: "deepseek-v4-flash",
-    defaultEffort: "high",
+    defaultModel: DEFAULT_CODEX_MODEL,
+    defaultEffort: "low",
     supportsPlanMode: true,
     supportsAutoPlanMode: false,
     models: [
       {
-        id: "deepseek-v4-flash",
-        label: "DeepSeek Flash",
+        id: "gpt-5.6-sol",
+        label: "GPT-5.6-Sol",
         supportsEffort: true,
-        aliases: ["deepseek-chat"],
-        supportedReasoningEfforts: DEEPSEEK_REASONING_OPTIONS,
-        defaultReasoningEffort: "high",
-        supportsFastMode: false,
+        supportedReasoningEfforts: [...CODEX_REASONING_OPTIONS],
+        defaultReasoningEffort: "low",
+        supportsFastMode: true,
       },
       {
-        id: "deepseek-v4-pro",
-        label: "DeepSeek Pro",
+        id: "gpt-5.6-terra",
+        label: "GPT-5.6-Terra",
         supportsEffort: true,
-        aliases: ["deepseek-reasoner"],
-        supportedReasoningEfforts: DEEPSEEK_REASONING_OPTIONS,
+        supportedReasoningEfforts: [...CODEX_REASONING_OPTIONS],
+        defaultReasoningEffort: "medium",
+        supportsFastMode: true,
+      },
+      {
+        id: "gpt-5.6-luna",
+        label: "GPT-5.6-Luna",
+        supportsEffort: true,
+        supportedReasoningEfforts: CODEX_REASONING_OPTIONS.filter((option) => option.id !== "ultra"),
+        defaultReasoningEffort: "medium",
+        supportsFastMode: true,
+      },
+      {
+        id: "gpt-5.5",
+        label: "GPT-5.5",
+        supportsEffort: true,
+        supportedReasoningEfforts: CODEX_REASONING_OPTIONS.filter((option) =>
+          option.id === "low" || option.id === "medium" || option.id === "high" || option.id === "xhigh"
+        ),
+        defaultReasoningEffort: "medium",
+        supportsFastMode: true,
+      },
+      {
+        id: "gpt-5.4",
+        label: "GPT-5.4",
+        supportsEffort: true,
+        supportedReasoningEfforts: CODEX_REASONING_OPTIONS.filter((option) =>
+          option.id === "low" || option.id === "medium" || option.id === "high" || option.id === "xhigh"
+        ),
+        defaultReasoningEffort: "medium",
+        supportsFastMode: true,
+      },
+      {
+        id: "gpt-5.4-mini",
+        label: "GPT-5.4-Mini",
+        supportsEffort: true,
+        supportedReasoningEfforts: CODEX_REASONING_OPTIONS.filter((option) =>
+          option.id === "low" || option.id === "medium" || option.id === "high" || option.id === "xhigh"
+        ),
+        defaultReasoningEffort: "medium",
+      },
+      {
+        id: "gpt-5.3-codex-spark",
+        label: "GPT-5.3-Codex-Spark",
+        supportsEffort: true,
+        supportedReasoningEfforts: CODEX_REASONING_OPTIONS.filter((option) =>
+          option.id === "low" || option.id === "medium" || option.id === "high" || option.id === "xhigh"
+        ),
         defaultReasoningEffort: "high",
-        supportsFastMode: false,
       },
     ],
-    efforts: [...DEEPSEEK_REASONING_OPTIONS],
+    efforts: [...CODEX_REASONING_OPTIONS],
   },
   {
     id: "cursor",
@@ -743,6 +799,11 @@ export const PROVIDERS: ProviderCatalogEntry[] = [
         label: "DeepSeek Pro",
         // 老 ID deepseek-reasoner 是 V3 时代的推理模型，现在指向 V4 Pro。
         aliases: ["deepseek-reasoner"],
+        supportsEffort: true,
+      },
+      {
+        id: "deepseek-v4-flash-vision-exp",
+        label: "DeepSeek Flash Vision (Exp)",
         supportsEffort: true,
       },
     ],
@@ -843,6 +904,12 @@ export function normalizeProviderModelId(
   }
   const match = getProviderModelMatch(provider, modelId)
   if (match) return match.id
+  if (provider === "codex" && modelId) {
+    // Codex models are account-scoped and discovered at runtime. Preserve
+    // future/unknown ids here and let app-server validate them.
+    const trimmed = modelId.trim()
+    if (trimmed) return trimmed
+  }
   if (provider === "claude" && modelId) {
     // Claude catalog ids are family aliases; persisted version-pinned ids from
     // older Kanna versions ("claude-opus-4-8", "claude-haiku-4-5-20251001")
@@ -862,8 +929,19 @@ export function normalizeClaudeModelId(modelId?: string, fallbackModelId = "opus
   return normalizeProviderModelId("claude", modelId, fallbackModelId)
 }
 
-export function normalizeCodexModelId(modelId?: string, fallbackModelId = "deepseek-v4-flash"): string {
-  return normalizeProviderModelId("codex", modelId, fallbackModelId)
+export function normalizeCodexModelId(modelId?: string, fallbackModelId = DEFAULT_CODEX_MODEL): string {
+  const trimmed = typeof modelId === "string" ? modelId.trim() : ""
+  // Builds before official Codex model discovery accidentally persisted the
+  // third-party DeepSeek catalog under the Codex provider. Move those values
+  // back to the current official default instead of showing/sending them.
+  if (
+    trimmed === "deepseek-chat"
+    || trimmed === "deepseek-reasoner"
+    || trimmed.startsWith("deepseek-")
+  ) {
+    return fallbackModelId
+  }
+  return normalizeProviderModelId("codex", trimmed, fallbackModelId)
 }
 
 // Cursor's real model list is discovered at runtime (`cursor-agent
@@ -910,9 +988,10 @@ export function getCodexReasoningOptions(modelId: string): readonly CodexReasoni
 export function normalizeCodexReasoningEffort(
   modelId: string,
   effort?: unknown,
+  modelOption?: ProviderModelOption,
 ): CodexReasoningEffort {
   const normalizedModel = normalizeCodexModelId(modelId)
-  const model = getCodexModelOption(normalizedModel)
+  const model = modelOption ?? getCodexModelOption(normalizedModel)
   const supported = model?.supportedReasoningEfforts ?? CODEX_REASONING_OPTIONS
 
   if (effort === "minimal" && normalizedModel.startsWith("gpt-5.6-")) {
@@ -1366,6 +1445,28 @@ export interface DeepSeekStatusSnapshot {
   month?: { year: number; month: number }
 }
 
+export type BeautifulUiLoadingVariant = "Drive" | "Dots" | "Orbit" | "Surfer"
+export type BeautifulUiThinkingVariant = "Steps" | "Reasoning" | "Search" | "Coding"
+export type BeautifulUiTaskRowsVariant = "Capsules" | "List"
+export type BeautifulUiPromptBarVariant = "Rounded" | "Pill"
+export type BeautifulUiCodeBlockVariant = "Code" | "Diff"
+
+export interface BeautifulUiPreferences {
+  loading: BeautifulUiLoadingVariant
+  thinking: BeautifulUiThinkingVariant
+  taskRows: BeautifulUiTaskRowsVariant
+  promptBar: BeautifulUiPromptBarVariant
+  codeBlock: BeautifulUiCodeBlockVariant
+}
+
+export const DEFAULT_BEAUTIFUL_UI_PREFERENCES: BeautifulUiPreferences = {
+  loading: "Drive",
+  thinking: "Reasoning",
+  taskRows: "List",
+  promptBar: "Rounded",
+  codeBlock: "Code",
+}
+
 export interface AppSettingsSnapshot {
   analyticsEnabled: boolean
   browserSettingsMigrated: boolean
@@ -1384,6 +1485,8 @@ export interface AppSettingsSnapshot {
     preset: EditorPreset
     commandTemplate: string
   }
+  /** Beautiful UI official component variants used across the live chat surface. */
+  beautifulUi: BeautifulUiPreferences
   defaultProvider: DefaultProviderPreference
   providerDefaults: ChatProviderPreferences
   /** Labs: the tabbed Chats/Projects "New Sidebar". On by default; false opts back into the legacy sidebar. */
@@ -1420,7 +1523,7 @@ export interface AppSettingsSnapshot {
     serviceStatus: boolean
   }
   /**
-   * 识图服务（视觉模型）：DeepSeek V4 是文本模型，贴图时由千问/GLM 等
+   * 识图服务（视觉模型）：Youmi 当前的附件识图由千问/GLM 等
    * VL 模型把图片转成文字描述，通过 vision MCP server 提供给各引擎。
    */
   visionService: VisionServiceSettings
@@ -1475,6 +1578,7 @@ export interface AppSettingsPatch {
   modelProfiles?: ModelProfile[]
   terminal?: Partial<AppSettingsSnapshot["terminal"]>
   editor?: Partial<AppSettingsSnapshot["editor"]>
+  beautifulUi?: Partial<BeautifulUiPreferences>
   defaultProvider?: DefaultProviderPreference
   providerDefaults?: {
     claude?: Partial<Omit<ProviderPreference<ClaudeModelOptions>, "modelOptions">> & {

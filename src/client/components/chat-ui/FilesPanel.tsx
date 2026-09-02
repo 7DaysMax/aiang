@@ -1,14 +1,12 @@
-import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Hammer, Loader2, Save, X } from "lucide-react"
-import { useCallback, useEffect, useState, type ReactNode } from "react"
+import { ChevronDown, ChevronRight, File, Folder, FolderOpen, Loader2, Save, X } from "lucide-react"
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { detectLanguage } from "../../lib/highlight"
 import { FileTypeIcon } from "../../lib/fileIcons"
 import { cn } from "../../lib/utils"
 import {
-  compileProject,
   isProbablyTextFile,
   listProjectTree,
   readProjectFileText,
-  type CompileResult,
   type ProjectTreeEntry,
   writeProjectFile,
 } from "../../lib/projectFiles"
@@ -232,10 +230,8 @@ export function FilesPanel({
   const [saving, setSaving] = useState(false)
   const [loadingFile, setLoadingFile] = useState(false)
   const [treeError, setTreeError] = useState<string | null>(null)
-  const [compileState, setCompileState] = useState<{ running: boolean; result: CompileResult | null }>({
-    running: false,
-    result: null,
-  })
+  // 单调递增的读取序号：快速切换文件时丢弃过期响应，防止慢读取覆盖新文件。
+  const fileReadSeqRef = useRef(0)
 
   const loadDir = useCallback(async (dir: string) => {
     try {
@@ -272,22 +268,28 @@ export function FilesPanel({
     if (!isProbablyTextFile(entry.path)) {
       setOpenFile(entry.path)
       setFileContent(null)
+      setFileTruncated(false)
       setDirty(false)
       return
     }
     setOpenFile(entry.path)
     setLoadingFile(true)
     setFileContent(null)
+    setFileTruncated(false)
     setDirty(false)
+    const seq = ++fileReadSeqRef.current
     try {
       const { text, truncated } = await readProjectFileText(projectId, entry.path)
+      // 读取期间用户切到了别的文件：丢弃这个过期结果，避免内容与标题错位。
+      if (seq !== fileReadSeqRef.current) return
       setFileContent(text)
       setFileTruncated(truncated)
     } catch (error) {
+      if (seq !== fileReadSeqRef.current) return
       setFileContent(`# 无法读取文件\n\n${error instanceof Error ? error.message : String(error)}`)
       setFileTruncated(false)
     } finally {
-      setLoadingFile(false)
+      if (seq === fileReadSeqRef.current) setLoadingFile(false)
     }
   }, [projectId])
 
@@ -304,25 +306,6 @@ export function FilesPanel({
       setSaving(false)
     }
   }, [dirty, fileContent, fileTruncated, openFile, projectId])
-
-  const runCompile = useCallback(async () => {
-    setCompileState({ running: true, result: null })
-    try {
-      const result = await compileProject(projectId)
-      setCompileState({ running: false, result })
-    } catch (error) {
-      setCompileState({
-        running: false,
-        result: {
-          ok: false,
-          exitCode: -1,
-          command: "compile",
-          output: error instanceof Error ? error.message : String(error),
-          durationMs: 0,
-        },
-      })
-    }
-  }, [projectId])
 
   // Cmd/Ctrl+S 保存当前打开的文件
   useEffect(() => {
@@ -353,21 +336,9 @@ export function FilesPanel({
         <h2 className="px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
           资源管理器
         </h2>
-        <div className="flex items-center gap-0.5">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1 px-1.5 text-[11px] text-muted-foreground"
-            onClick={() => void runCompile()}
-            disabled={compileState.running}
-          >
-            {compileState.running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Hammer className="h-3.5 w-3.5" />}
-            编译
-          </Button>
-          <Button variant="ghost" size="sm" className="h-7 px-1.5" onClick={onClose} aria-label="关闭文件面板">
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        </div>
+        <Button variant="ghost" size="sm" className="h-7 px-1.5" onClick={onClose} aria-label="关闭文件面板">
+          <X className="h-3.5 w-3.5" />
+        </Button>
       </div>
 
       {treeError ? <div className="px-3 py-2 text-xs text-destructive">{treeError}</div> : null}
@@ -404,29 +375,6 @@ export function FilesPanel({
           </div>
         )}
       </div>
-
-      {compileState.result ? (
-        <div
-          className={cn(
-            "max-h-36 shrink-0 overflow-y-auto border-t border-border px-3 py-2 font-mono text-[11px] leading-relaxed",
-            compileState.result.ok ? "text-muted-foreground" : "text-destructive",
-          )}
-        >
-          <div className="mb-1 flex items-center gap-2">
-            <span
-              className={cn(
-                "rounded px-1.5 py-0.5 text-[10px] font-semibold",
-                compileState.result.ok ? "bg-emerald-500/10 text-emerald-500" : "bg-destructive/10 text-destructive",
-              )}
-            >
-              {compileState.result.ok ? "通过" : "失败"}
-            </span>
-            <span>{compileState.result.command}</span>
-            <span className="ml-auto">{compileState.result.durationMs}ms</span>
-          </div>
-          <pre className="whitespace-pre-wrap break-words">{compileState.result.output || "（无输出）"}</pre>
-        </div>
-      ) : null}
     </div>
   )
 }

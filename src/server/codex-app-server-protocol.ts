@@ -133,6 +133,38 @@ export interface SkillsListResponse {
   }[]
 }
 
+/** `model/list` (codex app-server v2). */
+export interface ModelListParams {
+  cursor?: string | null
+  limit?: number | null
+  includeHidden?: boolean | null
+}
+
+export interface CodexAppServerModel {
+  id: string
+  model: string
+  displayName: string
+  description: string
+  hidden: boolean
+  supportedReasoningEfforts: Array<{
+    reasoningEffort: ReasoningEffort
+    description: string
+  }>
+  defaultReasoningEffort: ReasoningEffort
+  additionalSpeedTiers: string[]
+  serviceTiers: Array<{
+    id: string
+    name?: string
+    description?: string
+  }>
+  isDefault: boolean
+}
+
+export interface ModelListResponse {
+  data: CodexAppServerModel[]
+  nextCursor: string | null
+}
+
 export interface ThreadSummary {
   id: string
 }
@@ -189,6 +221,29 @@ export interface PlanDeltaNotification {
   turnId: string
   itemId: string
   delta: string
+}
+
+export interface AgentMessageDeltaNotification {
+  threadId: string
+  turnId: string
+  itemId: string
+  delta: string
+}
+
+export interface ReasoningSummaryTextDeltaNotification {
+  threadId: string
+  turnId: string
+  itemId: string
+  delta: string
+  summaryIndex: number
+}
+
+export interface ReasoningTextDeltaNotification {
+  threadId: string
+  turnId: string
+  itemId: string
+  delta: string
+  contentIndex: number
 }
 
 export interface ContextCompactedNotification {
@@ -517,6 +572,9 @@ export type ServerNotification =
   | { method: "turn/plan/updated"; params: TurnPlanUpdatedNotification }
   | { method: "item/started"; params: ItemStartedNotification }
   | { method: "item/completed"; params: ItemCompletedNotification }
+  | { method: "item/agentMessage/delta"; params: AgentMessageDeltaNotification }
+  | { method: "item/reasoning/summaryTextDelta"; params: ReasoningSummaryTextDeltaNotification }
+  | { method: "item/reasoning/textDelta"; params: ReasoningTextDeltaNotification }
   | { method: "item/plan/delta"; params: PlanDeltaNotification }
   | { method: "thread/compacted"; params: ContextCompactedNotification }
   | { method: "account/rateLimits/updated"; params: AccountRateLimitsUpdatedNotification }
@@ -549,6 +607,9 @@ export function isServerNotification(value: unknown): value is ServerNotificatio
     || candidate.method === "turn/plan/updated"
     || candidate.method === "item/started"
     || candidate.method === "item/completed"
+    || candidate.method === "item/agentMessage/delta"
+    || candidate.method === "item/reasoning/summaryTextDelta"
+    || candidate.method === "item/reasoning/textDelta"
     || candidate.method === "item/plan/delta"
     || candidate.method === "thread/compacted"
     || candidate.method === "account/rateLimits/updated"

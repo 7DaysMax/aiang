@@ -1,4 +1,4 @@
-import { Activity, BookText, Command, FlaskConical, Gauge, MessageSquareQuote, Puzzle, Settings2, type LucideIcon } from "lucide-react"
+import { Activity, BookText, Command, FlaskConical, Gauge, MessageSquareQuote, Palette, Puzzle, Settings2, type LucideIcon } from "lucide-react"
 
 /**
  * Single source of truth for settings navigation targets.
@@ -16,6 +16,12 @@ export const SETTINGS_SECTIONS = [
     label: "通用",
     icon: Settings2 as LucideIcon,
     subtitle: "管理外观、编辑器行为和内置终端默认设置。",
+  },
+  {
+    id: "appearance",
+    label: "界面样式",
+    icon: Palette as LucideIcon,
+    subtitle: "切换 Beautiful UI 官网组件的完整样式模式，聊天界面会立即同步。",
   },
   {
     id: "skills",
@@ -45,13 +51,13 @@ export const SETTINGS_SECTIONS = [
     id: "usage",
     label: "用量",
     icon: Gauge as LucideIcon,
-    subtitle: "DeepSeek 账户实时余额与用量记录。",
+    subtitle: "查看各模型服务的账户余额、订阅限额与可用状态。",
   },
   {
     id: "status",
     label: "服务状态",
     icon: Activity as LucideIcon,
-    subtitle: "DeepSeek 官方服务状态、组件可用率与事件记录。",
+    subtitle: "查看各引擎的官方服务状态、本机接入状态与当前故障。",
   },
   {
     id: "labs",
@@ -151,6 +157,38 @@ export const SETTINGS_ROWS = defineRows({
     keywords: ["遥测", "隐私", "统计"],
   },
 
+  // Appearance
+  loadingStyle: {
+    sectionId: "appearance",
+    title: "加载状态",
+    description: "选择长任务运行时的像素加载动画。",
+    keywords: ["beautiful ui", "loading", "Drive", "Dots", "Orbit", "Surfer"],
+  },
+  thinkingStyle: {
+    sectionId: "appearance",
+    title: "思考过程",
+    description: "选择代理推理轨迹的呈现方式。",
+    keywords: ["beautiful ui", "thinking", "Steps", "Reasoning", "Search", "Coding"],
+  },
+  taskRowsStyle: {
+    sectionId: "appearance",
+    title: "任务列表",
+    description: "选择任务步骤使用独立胶囊或紧凑列表。",
+    keywords: ["beautiful ui", "tasks", "Capsules", "List"],
+  },
+  promptBarStyle: {
+    sectionId: "appearance",
+    title: "输入栏",
+    description: "选择聊天输入区域的轮廓样式。",
+    keywords: ["beautiful ui", "prompt", "Rounded", "Pill"],
+  },
+  codeBlockStyle: {
+    sectionId: "appearance",
+    title: "代码块",
+    description: "选择代码内容默认使用代码视图或差异视图。",
+    keywords: ["beautiful ui", "code", "diff"],
+  },
+
   // Providers
   modelProfiles: {
     sectionId: "providers",
@@ -167,7 +205,7 @@ export const SETTINGS_ROWS = defineRows({
   visionService: {
     sectionId: "providers",
     title: "识图服务（视觉模型）",
-    description: "DeepSeek V4 是文本模型，贴图时由千问/GLM 视觉模型把图片转成文字描述（describe_image MCP 工具）。",
+    description: "Youmi 当前的图片附件统一由千问/GLM 视觉服务转成文字描述（describe_image MCP 工具）。",
     keywords: ["识图", "视觉", "图片", "截图", "qwen", "glm", "mcp"],
   },
   claudeEngine: {

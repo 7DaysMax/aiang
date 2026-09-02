@@ -53,25 +53,26 @@ describe("renderChatStatusDot", () => {
     expect(renderDot({ ...baseChat, uncommittedWork: true })).toBeNull()
   })
 
-  test("unread renders a pinging green dot", () => {
+  test("unread renders a still green dot (no ping pulse)", () => {
     const html = renderDot({ ...baseChat, unread: true })
 
-    expect(html).toContain("bg-emerald-400")
-    expect(html).toContain("animate-ping")
+    expect(html).toContain("rounded-full")
+    expect(html).toContain("bg-green")
+    expect(html).not.toContain("animate-ping")
   })
 
   test("awaiting the user outranks unread", () => {
     const html = renderDot({ ...baseChat, status: "waiting_for_user", unread: true })
 
     expect(html).toContain("bg-blue-400")
-    expect(html).not.toContain("bg-emerald-400")
+    expect(html).not.toContain("bg-green")
   })
 
   test("a running turn outranks both", () => {
     const html = renderDot({ ...baseChat, status: "running", unread: true })
 
     expect(html).toContain("animate-spin")
-    expect(html).not.toContain("bg-emerald-400")
+    expect(html).not.toContain("bg-green")
   })
 })
 

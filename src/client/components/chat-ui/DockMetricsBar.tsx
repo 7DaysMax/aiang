@@ -40,14 +40,15 @@ function MetricChip({
         <button
           type="button"
           onClick={onClick}
+          aria-label={`${label} ${value}`}
           className={cn(
-            "group inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs leading-relaxed transition-colors",
+            "group inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 text-xs leading-relaxed transition-colors",
             onClick ? "hover:bg-muted/60" : "cursor-default",
             muted ? "text-muted-foreground/60" : "text-muted-foreground",
           )}
         >
           <span className="[&>svg]:h-3 [&>svg]:w-3 shrink-0 opacity-70">{icon}</span>
-          <span className="whitespace-nowrap">{label}</span>
+          <span className="hidden whitespace-nowrap sm:inline">{label}</span>
           <span className={cn("whitespace-nowrap font-medium tabular-nums", !muted && "text-foreground/90")}>
             {value}
           </span>
@@ -100,7 +101,7 @@ export function DockMetricsBar({
   const averageRate = formatRate(metrics.averageCacheHitRate)
 
   return (
-    <div className="flex flex-row flex-wrap items-center justify-center gap-x-1 gap-y-0.5 px-3 pb-1 pt-0.5">
+    <div className="flex flex-row flex-nowrap items-center justify-start gap-0 overflow-x-auto px-3 pb-1 pt-0.5 [scrollbar-width:none] sm:justify-center [&::-webkit-scrollbar]:hidden">
       {visible.balance ? (
         <MetricChip
           icon={<Coins />}

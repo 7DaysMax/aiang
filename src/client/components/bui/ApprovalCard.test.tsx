@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import { ApprovalCard } from "./ApprovalCard"
-import { AnswerActions } from "./AnswerActions"
+import ApprovalCard from "@/components/primitives/ApprovalCard"
+import { LiveStreamingText } from "@/components/primitives/StreamingText"
 
 describe("ApprovalCard", () => {
   test("renders the first question with Continue and rolling step count", () => {
@@ -24,20 +24,20 @@ describe("ApprovalCard", () => {
   })
 })
 
-describe("AnswerActions", () => {
-  test("shows copy and follow-ups after the answer settles", () => {
+describe("LiveStreamingText", () => {
+  test("shows compact answer actions without generated follow-ups", () => {
     const html = renderToStaticMarkup(
-      <AnswerActions text="The scoop is ready.\nWant tests next?" retryPrompt="ship it" />
+      <LiveStreamingText text="The scoop is ready.\nWant tests next?" retryPrompt="ship it">The scoop is ready.</LiveStreamingText>
     )
-    expect(html).toContain("Follow-ups")
-    expect(html).toContain("Want tests next?")
+    expect(html).not.toContain("接下来")
     expect(html).toContain("Retry")
   })
 
   test("hides while streaming", () => {
     const html = renderToStaticMarkup(
-      <AnswerActions text="partial" streaming />
+      <LiveStreamingText text="partial" streaming>partial</LiveStreamingText>
     )
-    expect(html).toBe("")
+    expect(html).toContain("partial")
+    expect(html).not.toContain('aria-label="Copy"')
   })
 })

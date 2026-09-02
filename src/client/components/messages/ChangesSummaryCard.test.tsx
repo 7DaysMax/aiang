@@ -26,7 +26,7 @@ describe("ChangesSummaryCard", () => {
     expect(html).toContain("−4")
     expect(html).toContain("+30")
     expect(html).toContain("−8")
-    expect(html).toContain("Apply 3 changes")
+    expect(html).toContain("Review changes")
     expect(html).toContain("Discard")
   })
 })

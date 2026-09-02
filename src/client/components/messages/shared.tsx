@@ -38,8 +38,10 @@ import {
 import { cn } from "../../lib/utils"
 import { parseLocalFileLink } from "../../lib/pathUtils"
 import { useTranscriptRenderOptions } from "./render-context"
-import { CodeBlock, CodeBlockFromMarkdown } from "../bui/CodeBlock"
+import CodeBlock, { CodeBlockFromMarkdown, type DiffRow } from "@/components/primitives/CodeBlock"
 import { prepareStreamingMarkdown, sameStreamingCode } from "../../lib/streamingMarkdown"
+import { DEFAULT_BEAUTIFUL_UI_PREFERENCES } from "@/shared/types"
+import { useAppSettingsStore } from "../../stores/appSettingsStore"
 
 export type OpenLocalLinkTarget = {
   path: string
@@ -167,13 +169,16 @@ export function ExpandableRow({ children, expandedContent, defaultExpanded = fal
 export function MetaCodeBlock({ label, children, copyText }: { label: ReactNode; children: ReactNode; copyText?: string }) {
   const textContent = copyText ?? extractText(children)
   const filename = typeof label === "string" ? label : undefined
+  const variant = useAppSettingsStore(
+    (store) => store.settings?.beautifulUi?.codeBlock ?? DEFAULT_BEAUTIFUL_UI_PREFERENCES.codeBlock,
+  )
 
   return (
     <div className="flex flex-col gap-1.5">
       {typeof label !== "string" ? (
         <span className="font-medium text-ink-2">{label}</span>
       ) : null}
-      <CodeBlock code={textContent} filename={filename} />
+      <CodeBlock code={textContent} filename={filename} variant={variant} diff={codeAsDiff(textContent)} />
     </div>
   )
 }
@@ -218,6 +223,16 @@ function extractText(node: ReactNode): string {
     return extractText(props.children)
   }
   return ""
+}
+
+function codeAsDiff(code: string): DiffRow[] {
+  const lines = code.length === 0 ? [""] : code.replace(/\n$/, "").split("\n")
+  return lines.map((line, index) => ({
+    old: null,
+    cur: index + 1,
+    type: "add",
+    pieces: [{ text: line, change: "add" }],
+  }))
 }
 
 function getCodeClassName(node: ReactNode): string | undefined {
@@ -287,13 +302,16 @@ export const markdownComponents = {
 
   pre: ({ children }: ComponentPropsWithoutRef<"pre">) => {
     const stream = useContext(TranscriptMarkdownStreamContext)
+    const variant = useAppSettingsStore(
+      (store) => store.settings?.beautifulUi?.codeBlock ?? DEFAULT_BEAUTIFUL_UI_PREFERENCES.codeBlock,
+    )
     const textContent = extractText(children)
     const info = getCodeClassName(children)
     const streaming = stream.streamingFence && stream.openCode != null && sameStreamingCode(textContent, stream.openCode)
 
     return (
       <div className="my-5 first:mt-0 last:mb-0 max-w-full min-w-0">
-        <CodeBlockFromMarkdown code={textContent} info={info} streaming={streaming} />
+        <CodeBlockFromMarkdown code={textContent} info={info} streaming={streaming} variant={variant} />
       </div>
     )
   },

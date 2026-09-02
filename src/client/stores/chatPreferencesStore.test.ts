@@ -90,7 +90,7 @@ describe("migrateChatPreferencesState", () => {
           autoPlan: false,
         },
         codex: {
-          model: "deepseek-v4-flash",
+          model: "gpt-5.3-codex",
           modelOptions: { reasoningEffort: "high", fastMode: true },
           planMode: false,
           autoPlan: false,
@@ -172,7 +172,7 @@ describe("migrateChatPreferencesState", () => {
     })
   })
 
-  test("migrates persisted legacy Codex defaults to the DeepSeek V4 catalog", () => {
+  test("preserves persisted official Codex defaults for the runtime catalog", () => {
     const migrated = migrateChatPreferencesState({
       defaultProvider: "last_used",
       providerDefaults: {
@@ -186,14 +186,14 @@ describe("migrateChatPreferencesState", () => {
     })
 
     expect(migrated.providerDefaults.codex).toEqual({
-      model: "deepseek-v4-flash",
+      model: "gpt-5-codex",
       modelOptions: { reasoningEffort: "low", fastMode: true },
       planMode: false,
       autoPlan: false,
     })
   })
 
-  test("migrates persisted Codex composer states into the DeepSeek V4 catalog", () => {
+  test("preserves persisted official Codex composer states", () => {
     const migrated = migrateChatPreferencesState({
       defaultProvider: "codex",
       providerDefaults: {
@@ -223,28 +223,28 @@ describe("migrateChatPreferencesState", () => {
     })
 
     expect(migrated.providerDefaults.codex).toEqual({
-      model: "deepseek-v4-flash",
+      model: "gpt-5.3-codex-spark",
       modelOptions: { reasoningEffort: "low", fastMode: true },
       planMode: true,
       autoPlan: false,
     })
     expect(migrated.chatStates.chatA).toEqual({
       provider: "codex",
-      model: "deepseek-v4-flash",
-      modelOptions: { reasoningEffort: "high", fastMode: false },
+      model: "gpt-5.4",
+      modelOptions: { reasoningEffort: "medium", fastMode: false },
       planMode: false,
       autoPlan: false,
     })
     expect(migrated.legacyComposerState).toEqual({
       provider: "codex",
-      model: "deepseek-v4-flash",
-      modelOptions: { reasoningEffort: "high", fastMode: true },
+      model: "gpt-5.3-codex",
+      modelOptions: { reasoningEffort: "xhigh", fastMode: true },
       planMode: true,
       autoPlan: false,
     })
   })
 
-  test("migrates persisted GPT-5.6 defaults and Ultra into the DeepSeek V4 catalog", () => {
+  test("preserves persisted GPT-5.6 defaults and Ultra", () => {
     const migrated = migrateChatPreferencesState({
       defaultProvider: "codex",
       providerDefaults: {
@@ -258,8 +258,8 @@ describe("migrateChatPreferencesState", () => {
     })
 
     expect(migrated.providerDefaults.codex).toEqual({
-      model: "deepseek-v4-flash",
-      modelOptions: { reasoningEffort: "high", fastMode: true },
+      model: "gpt-5.6-terra",
+      modelOptions: { reasoningEffort: "ultra", fastMode: true },
       planMode: true,
       autoPlan: false,
     })
@@ -267,16 +267,16 @@ describe("migrateChatPreferencesState", () => {
 })
 
 describe("chat preference store", () => {
-  test("starts with DeepSeek Flash and High as the default Codex configuration", () => {
+  test("starts with the official Codex default model and effort", () => {
     expect(INITIAL_STATE.providerDefaults.codex).toEqual({
-      model: "deepseek-v4-flash",
-      modelOptions: { reasoningEffort: "high", fastMode: false },
+      model: "gpt-5.6-sol",
+      modelOptions: { reasoningEffort: "low", fastMode: false },
       planMode: false,
       autoPlan: false,
     })
   })
 
-  test("normalizes legacy and unsupported Codex engine reasoning levels", () => {
+  test("migrates stale DeepSeek Codex states to official model semantics", () => {
     const store = useChatPreferencesStore.getState()
 
     store.setComposerState("flash", {
@@ -294,25 +294,31 @@ describe("chat preference store", () => {
       autoPlan: false,
     })
 
-    expect(useChatPreferencesStore.getState().getComposerState("flash").modelOptions.reasoningEffort).toBe("high")
-    expect(useChatPreferencesStore.getState().getComposerState("pro").modelOptions.reasoningEffort).toBe("high")
+    expect(useChatPreferencesStore.getState().getComposerState("flash")).toMatchObject({
+      model: "gpt-5.6-sol",
+      modelOptions: { reasoningEffort: "low" },
+    })
+    expect(useChatPreferencesStore.getState().getComposerState("pro")).toMatchObject({
+      model: "gpt-5.6-sol",
+      modelOptions: { reasoningEffort: "ultra" },
+    })
   })
 
   test("clamps unsupported reasoning levels when switching Codex engine models", () => {
     const store = useChatPreferencesStore.getState()
     store.setComposerState("chat-a", {
       provider: "codex",
-      model: "deepseek-v4-flash",
+      model: "gpt-5.6-sol",
       modelOptions: { reasoningEffort: "ultra", fastMode: false },
       planMode: false,
       autoPlan: false,
     })
 
-    store.setChatComposerModel("chat-a", "deepseek-v4-pro")
+    store.setChatComposerModel("chat-a", "gpt-5.6-luna")
 
     expect(useChatPreferencesStore.getState().getComposerState("chat-a")).toMatchObject({
-      model: "deepseek-v4-pro",
-      modelOptions: { reasoningEffort: "high" },
+      model: "gpt-5.6-luna",
+      modelOptions: { reasoningEffort: "max" },
     })
   })
 
@@ -334,7 +340,7 @@ describe("chat preference store", () => {
 
     expect(useChatPreferencesStore.getState().getComposerState("chat-a")).toEqual({
       provider: "codex",
-      model: "deepseek-v4-flash",
+      model: "gpt-5.3-codex",
       modelOptions: { reasoningEffort: "high", fastMode: true },
       planMode: true,
       autoPlan: false,
@@ -393,7 +399,7 @@ describe("chat preference store", () => {
     })
     expect(store.getComposerState("chat-b")).toEqual({
       provider: "codex",
-      model: "deepseek-v4-flash",
+      model: "gpt-5.3-codex",
       modelOptions: { reasoningEffort: "high", fastMode: true },
       planMode: true,
       autoPlan: false,
@@ -472,7 +478,7 @@ describe("chat preference store", () => {
 
     expect(useChatPreferencesStore.getState().getComposerState("chat-a")).toEqual({
       provider: "codex",
-      model: "deepseek-v4-flash",
+      model: "gpt-5.3-codex",
       modelOptions: { reasoningEffort: "high", fastMode: true },
       planMode: true,
       autoPlan: false,
@@ -498,7 +504,7 @@ describe("chat preference store", () => {
 
     expect(useChatPreferencesStore.getState().getComposerState("chat-a")).toEqual({
       provider: "codex",
-      model: "deepseek-v4-flash",
+      model: "gpt-5.3-codex-spark",
       modelOptions: { reasoningEffort: "high", fastMode: true },
       planMode: true,
       autoPlan: false,
@@ -600,7 +606,7 @@ describe("chat preference store", () => {
 
     expect(useChatPreferencesStore.getState().getComposerState(NEW_CHAT_COMPOSER_ID)).toEqual({
       provider: "codex",
-      model: "deepseek-v4-flash",
+      model: "gpt-5.5",
       modelOptions: { reasoningEffort: "low", fastMode: true },
       planMode: false,
       autoPlan: false,
@@ -634,15 +640,19 @@ describe("chat preference store", () => {
     })
   })
 
-  test("tracks collaboration per chat and copies it onto a new chat", () => {
+  test("tracks collaboration roles per chat and copies them onto new chats", () => {
     const store = useChatPreferencesStore.getState()
     expect(store.getChatCollaboration(NEW_CHAT_COMPOSER_ID)).toBe(false)
 
     store.setChatCollaboration(NEW_CHAT_COMPOSER_ID, true)
+    store.setChatImplementationProvider(NEW_CHAT_COMPOSER_ID, "deepseek")
+    store.setChatReviewProvider(NEW_CHAT_COMPOSER_ID, "codex")
     expect(useChatPreferencesStore.getState().getChatCollaboration(NEW_CHAT_COMPOSER_ID)).toBe(true)
 
     store.initializeComposerForChat("chat-collab", { sourceChatId: NEW_CHAT_COMPOSER_ID })
     expect(useChatPreferencesStore.getState().getChatCollaboration("chat-collab")).toBe(true)
+    expect(useChatPreferencesStore.getState().getChatImplementationProvider("chat-collab")).toBe("deepseek")
+    expect(useChatPreferencesStore.getState().getChatReviewProvider("chat-collab")).toBe("codex")
 
     store.setChatCollaboration("chat-collab", false)
     expect(useChatPreferencesStore.getState().getChatCollaboration("chat-collab")).toBe(false)
@@ -650,5 +660,12 @@ describe("chat preference store", () => {
 
     store.copyChatCollaboration(NEW_CHAT_COMPOSER_ID, "chat-copy")
     expect(useChatPreferencesStore.getState().getChatCollaboration("chat-copy")).toBe(true)
+    expect(useChatPreferencesStore.getState().getChatImplementationProvider("chat-copy")).toBe("deepseek")
+    expect(useChatPreferencesStore.getState().getChatReviewProvider("chat-copy")).toBe("codex")
+
+    store.clearChatImplementationProvider("chat-copy")
+    store.clearChatReviewProvider("chat-copy")
+    expect(useChatPreferencesStore.getState().getChatImplementationProvider("chat-copy")).toBeNull()
+    expect(useChatPreferencesStore.getState().getChatReviewProvider("chat-copy")).toBeNull()
   })
 })

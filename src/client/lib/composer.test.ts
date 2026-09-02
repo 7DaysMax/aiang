@@ -95,6 +95,36 @@ describe("deriveComposerView", () => {
     expect(view.effectiveState).toBe(stored)
   })
 
+  test("Codex falls back to the live catalog default when a persisted model disappeared", () => {
+    const codexConfig = {
+      ...PROVIDERS.find((provider) => provider.id === "codex")!,
+      defaultModel: "gpt-5.6-terra",
+      models: [{
+        id: "gpt-5.6-terra",
+        label: "GPT-5.6-Terra",
+        supportsEffort: true,
+        supportedReasoningEfforts: [{ id: "medium", label: "Medium" }],
+        defaultReasoningEffort: "medium" as const,
+      }],
+    }
+    const view = deriveComposerView({
+      chatId: null,
+      activeProvider: null,
+      availableProviders: PROVIDERS.map((provider) => provider.id === "codex" ? codexConfig : provider),
+      composerState: {
+        provider: "codex",
+        model: "deepseek-v4-flash",
+        modelOptions: { reasoningEffort: "high", fastMode: false },
+        planMode: false,
+        autoPlan: false,
+      },
+      providerDefaults,
+    })
+
+    expect(view.effectiveState.model).toBe("gpt-5.6-terra")
+    expect(view.effectiveState.modelOptions.reasoningEffort).toBe("medium")
+  })
+
   test("stored state matching the session provider is used as-is", () => {
     const stored = claudeState({ model: "claude-sonnet-4-6" })
     const view = deriveComposerView({
@@ -124,6 +154,7 @@ describe("isModelSelectable", () => {
     expect(isModelSelectable(view, claudeModels[0].id)).toBe(true)
     // Claude 入口目录里现在包含 DeepSeek V4 模型（切换后走 ccb 引擎）。
     expect(isModelSelectable(view, "deepseek-v4-pro")).toBe(true)
+    expect(isModelSelectable(view, "deepseek-v4-flash-vision-exp")).toBe(true)
     expect(isModelSelectable(view, "made-up-model")).toBe(false)
   })
 })
@@ -145,9 +176,12 @@ describe("applyModelToComposerState", () => {
       modelOptions: { ...providerDefaults.codex.modelOptions, reasoningEffort: "ultra" },
       planMode: false,
     } as ComposerState
-    const next = applyModelToComposerState(state, "deepseek-v4-pro")
+    const luna = PROVIDERS.find((provider) => provider.id === "codex")!.models
+      .find((model) => model.id === "gpt-5.6-luna")!
+    const next = applyModelToComposerState(state, luna.id, luna)
     expect(next.provider).toBe("codex")
-    expect(next.model).toBe("deepseek-v4-pro")
+    expect(next.model).toBe("gpt-5.6-luna")
+    expect(next.modelOptions.reasoningEffort).toBe("max")
     // Effort is clamped/normalized for the selected model rather than kept blindly.
     expect(typeof (next.modelOptions as { reasoningEffort: string }).reasoningEffort).toBe("string")
   })

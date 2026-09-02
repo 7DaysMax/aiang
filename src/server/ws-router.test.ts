@@ -111,6 +111,13 @@ const DEFAULT_APP_SETTINGS_SNAPSHOT: AppSettingsSnapshot = {
     preset: "cursor",
     commandTemplate: "cursor {path}",
   },
+  beautifulUi: {
+    loading: "Drive",
+    thinking: "Reasoning",
+    taskRows: "List",
+    promptBar: "Rounded",
+    codeBlock: "Code",
+  },
   defaultProvider: "last_used",
   providerDefaults: {
     claude: {

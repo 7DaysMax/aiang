@@ -226,7 +226,23 @@ export function buildHandoffContext(args: {
   for (const entry of args.entries) {
     if (entry.hidden) continue
     const block = blockFromEntry(entry)
-    if (block) blocks.push({ ...block, elided: false })
+    if (!block) continue
+
+    const previous = blocks.at(-1)
+    if (
+      entry.kind === "assistant_text"
+      && entry.messageId
+      && previous?.entry.kind === "assistant_text"
+      && previous.entry.messageId === entry.messageId
+    ) {
+      // Harnesses persist streamed text as deltas. A handoff must preserve
+      // their semantic message boundary; otherwise the next agent can mistake
+      // chunks such as "实现" + "引擎已连接" for two separate replies.
+      previous.body += entry.text
+      continue
+    }
+
+    blocks.push({ ...block, elided: false })
   }
   if (blocks.length === 0 || !blocks.some((block) => block.entry.kind === "user_prompt")) {
     return null

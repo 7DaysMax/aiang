@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import { CodeBlock, CodeBlockFromMarkdown } from "./CodeBlock"
+import CodeBlock, { CodeBlockFromMarkdown } from "@/components/primitives/CodeBlock"
 
 describe("CodeBlock", () => {
   test("renders filename, language, line numbers, and copy", () => {
@@ -24,7 +24,7 @@ describe("CodeBlock", () => {
     const html = renderToStaticMarkup(
       <CodeBlock language="ts" code={"const a = 1"} streaming />
     )
-    expect(html).toContain("bg-accent")
+    expect(html).toContain("stream-caret")
     expect(html).toContain("const")
   })
 
@@ -34,5 +34,14 @@ describe("CodeBlock", () => {
     )
     expect(html).toContain("app.tsx")
     expect(html).toContain("TSX")
+  })
+
+  test("renders markdown code using the official Diff variant", () => {
+    const html = renderToStaticMarkup(
+      <CodeBlockFromMarkdown variant="Diff" info="ts" code={"const a = 1\nconst b = 2"} />
+    )
+    expect(html).toContain('data-variant="Diff"')
+    expect(html).toContain("+2")
+    expect(html).toContain("bg-green-tint")
   })
 })

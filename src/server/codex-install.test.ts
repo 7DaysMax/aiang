@@ -28,13 +28,12 @@ describe("codex install helpers", () => {
 
   test("fetchCodexLatestVersion reads the GitHub latest release tag", async () => {
     resetCodexLatestVersionCache()
-    const latest = await fetchCodexLatestVersion(async () =>
-      Response.json({ tag_name: "rust-v0.47.0" }) as unknown as Response
-    )
+    const latest = await fetchCodexLatestVersion((async () =>
+      Response.json({ tag_name: "rust-v0.47.0" })) as unknown as typeof fetch)
     expect(latest).toBe("0.47.0")
-    const cached = await fetchCodexLatestVersion(async () => {
+    const cached = await fetchCodexLatestVersion((async () => {
       throw new Error("should use cache")
-    })
+    }) as unknown as typeof fetch)
     expect(cached).toBe("0.47.0")
   })
 
@@ -196,7 +195,7 @@ describe("ws router codex commands", () => {
     const seen: Array<{ force?: boolean }> = []
     const router = createTestRouter({
       detectCodexImpl: async () => ({ installed: true, version: "0.1.0" }),
-      installCodexImpl: async (options) => {
+      installCodexImpl: async (options: { onLog?: (line: string) => void; force?: boolean; homeDir?: string } | undefined) => {
         seen.push(options ?? {})
         return { ok: true, message: "upgraded", version: "0.47.0" }
       },

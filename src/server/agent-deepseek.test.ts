@@ -10,8 +10,25 @@ mock.module("./deepseek-agent", () => ({
   resolveDeepSeekApiKey: () => null,
 }))
 
+// deepseek 通道的缺 key 检查走 requireModelProfileCredentials() →
+// resolveModelRuntime()（模型档案优先于 legacy key）。固定为无档案状态，
+// 让失败路径可确定性地测试，不依赖本机 ~/.aiang(-dev) 配置。
+const actualModelProfiles = await import("./model-profiles")
+mock.module("./model-profiles", () => ({
+  ...actualModelProfiles,
+  resolveModelRuntime: () => ({
+    kind: "none",
+    apiKey: "",
+    baseUrl: "",
+    modelId: "",
+    protocol: "openai-compat",
+    profile: null,
+  }),
+}))
+
 const { AgentCoordinator } = await import("./agent")
-const { MISSING_DEEPSEEK_KEY_MESSAGE } = actualDeepseek
+const MISSING_MODEL_PROFILE_MESSAGE =
+  "未配置模型档案。请在「设置 → 模型服务」添加一份档案（baseUrl、API Key、模型）。"
 
 async function waitFor(condition: () => boolean, timeoutMs = 2000) {
   const start = Date.now()
@@ -138,7 +155,7 @@ function createFakeStore(options?: {
 }
 
 describe("AgentCoordinator deepseek integration", () => {
-  test("missing API key records a friendly error result instead of throwing", async () => {
+  test("missing model profile records a friendly error result instead of throwing", async () => {
     const store = createFakeStore()
     const coordinator = new AgentCoordinator({
       store: store as never,
@@ -154,9 +171,9 @@ describe("AgentCoordinator deepseek integration", () => {
 
     await waitFor(() => store.failureReasons.length > 0)
 
-    expect(store.failureReasons).toEqual([MISSING_DEEPSEEK_KEY_MESSAGE])
+    expect(store.failureReasons).toEqual([MISSING_MODEL_PROFILE_MESSAGE])
     expect(store.messages.some(
-      (entry) => entry.kind === "result" && entry.result === MISSING_DEEPSEEK_KEY_MESSAGE
+      (entry) => entry.kind === "result" && entry.result === MISSING_MODEL_PROFILE_MESSAGE
     )).toBe(true)
     expect(store.messages.some(
       (entry) => entry.kind === "result" && entry.result === "Agent session was not initialized"

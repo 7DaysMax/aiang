@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
-import { ToolChipRow } from "./ToolChipRow"
-import { DiffChips } from "./DiffChips"
+import { LiveToolChipRow as ToolChipRow, LiveDiffChips as DiffChips } from "@/components/primitives/ToolChips"
 
 describe("ToolChipRow", () => {
   test("renders label, mono chip, and pending spinner", () => {

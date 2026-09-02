@@ -42,7 +42,11 @@ import { NEW_CHAT_COMPOSER_ID, type ComposerState } from "../stores/chatPreferen
  */
 
 /** Applies a model change to a composer state, normalizing dependent options. */
-export function applyModelToComposerState(state: ComposerState, model: string): ComposerState {
+export function applyModelToComposerState(
+  state: ComposerState,
+  model: string,
+  modelOption?: ProviderModelOption,
+): ComposerState {
   if (state.provider === "codex") {
     const normalizedModel = normalizeCodexModelId(model)
     return {
@@ -50,7 +54,11 @@ export function applyModelToComposerState(state: ComposerState, model: string): 
       model: normalizedModel,
       modelOptions: {
         ...state.modelOptions,
-        reasoningEffort: normalizeCodexReasoningEffort(normalizedModel, state.modelOptions.reasoningEffort),
+        reasoningEffort: normalizeCodexReasoningEffort(
+          normalizedModel,
+          state.modelOptions.reasoningEffort,
+          modelOption,
+        ),
       },
     }
   }
@@ -211,12 +219,28 @@ export function deriveComposerView(args: {
   // Without an explicit switch, a stored state whose provider disagrees with
   // the chat's session (e.g. seeded from defaults) defers to the session's
   // provider — same fallback as before switching existed.
-  const effectiveState = providerSwitchPending
+  const requestedState = providerSwitchPending
     ? args.composerState
     : getEffectiveComposerState(args.composerState, args.activeProvider, args.providerDefaults)
-  const selectedProvider = effectiveState.provider
+  const selectedProvider = requestedState.provider
   const providerConfig = args.availableProviders.find((provider) => provider.id === selectedProvider)
     ?? args.availableProviders[0]
+  const selectedModelOption = providerConfig?.id === selectedProvider
+    ? providerConfig.models.find((model) => model.id === requestedState.model)
+    : undefined
+  // Codex's runtime catalog is account-scoped and can retire models. Render
+  // and submit its live default when a persisted choice disappeared;
+  // the store itself remains untouched until the user makes a selection.
+  const effectiveState = selectedProvider === "codex"
+    && providerConfig?.id === selectedProvider
+    && providerConfig.models.length > 0
+    && !selectedModelOption
+    ? applyModelToComposerState(
+      requestedState,
+      providerConfig.defaultModel,
+      providerConfig.models.find((model) => model.id === providerConfig.defaultModel),
+    )
+    : requestedState
 
   return {
     composerChatId,
@@ -299,7 +323,7 @@ export function deriveComposerOptionControls(
             ? [...PI_REASONING_OPTIONS]
             : state.provider === "deepseek" || state.provider === "reasonix" || state.provider === "youmi"
               ? [...DEEPSEEK_REASONING_OPTIONS]
-              : [...getCodexReasoningOptions(state.model)]
+              : [...(selectedModelOption?.supportedReasoningEfforts ?? getCodexReasoningOptions(state.model))]
       ) as ComposerOptionChoice[],
       selectedId: modelOptions.reasoningEffort,
     }

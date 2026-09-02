@@ -6,6 +6,10 @@ import {
   DEFAULT_OPENAI_SDK_MODEL,
   DEFAULT_OPENROUTER_SDK_MODEL,
   type AgentProvider,
+  type ClaudeReasoningEffort,
+  type CodexReasoningEffort,
+  type DeepSeekReasoningEffort,
+  type PiReasoningEffort,
   type ChatMode,
   type DeepSeekConnectionTestResult,
   type DefaultProviderPreference,
@@ -36,6 +40,8 @@ import { BrandChoiceGrid, type BrandChoiceOption } from "./BrandChoiceGrid"
 import { ModelProfilesPanel } from "./ModelProfilesPanel"
 import { handleSettingsInputKeyDown, SettingsErrorBanner, SettingsRow } from "./shared"
 import { SETTINGS_ROWS } from "./registry"
+import RecommendationCard, { type RecommendationOption } from "@/components/primitives/RecommendationCard"
+import FineTuneCard from "@/components/primitives/FineTuneCard"
 
 const QUICK_RESPONSE_PROVIDER_OPTIONS: Array<{ value: LlmProviderKind; label: string }> = [
   { value: "openai", label: "OpenAI" },
@@ -259,9 +265,12 @@ export function ProvidersSection({
     provider: AgentProvider,
     change: { type: string; effort?: string; fastMode?: boolean },
   ) {
-    if (change.type === "deepseekReasoningEffort" && change.effort) {
-      const modelOptions = { reasoningEffort: change.effort as "low" | "high" | "max" }
-      setProviderDefaultModelOptions(provider, modelOptions)
+    if (change.type.endsWith("ReasoningEffort") && change.effort) {
+      if (provider === "claude") setProviderDefaultModelOptions("claude", { reasoningEffort: change.effort as ClaudeReasoningEffort })
+      else if (provider === "codex") setProviderDefaultModelOptions("codex", { reasoningEffort: change.effort as CodexReasoningEffort })
+      else if (provider === "pi") setProviderDefaultModelOptions("pi", { reasoningEffort: change.effort as PiReasoningEffort })
+      else if (provider === "deepseek" || provider === "reasonix" || provider === "youmi") setProviderDefaultModelOptions(provider, { reasoningEffort: change.effort as DeepSeekReasoningEffort })
+      const modelOptions = { reasoningEffort: change.effort }
       void handleWriteAppSettings({ providerDefaults: { [provider]: { modelOptions } } }).catch((error) => {
         setProvidersError(error instanceof Error ? error.message : "Unable to save provider settings.")
       })
@@ -346,9 +355,51 @@ export function ProvidersSection({
     </>
   )
 
+  const recommendedEngineOptions: RecommendationOption[] = state.availableProviders.slice(0, 4).map((provider, index) => ({
+    key: provider.id,
+    body: <><span className="font-medium text-ink">{provider.label}</span> 默认使用 <span className="font-mono text-[12px]">{provider.defaultModel}</span>，可用 {provider.models.length} 个模型和 {provider.efforts.length} 档推理强度。</>,
+    short: `${provider.label} · ${provider.defaultModel}`,
+    signal: index === 0 ? 3 : index === 1 ? 2 : 1,
+    tone: index === 0 ? "var(--green)" : index === 1 ? "var(--orange)" : "var(--ink-3)",
+    label: provider.id === defaultProvider ? "当前默认" : provider.supportsPlanMode ? "支持计划模式" : "可用",
+    cta: provider.id === defaultProvider ? "已设为默认" : "设为默认",
+    ctaVariant: index === 0 ? "accent" : "primary",
+  }))
+  const fineTuneProvider = defaultProvider === "last_used" ? (state.availableProviders[0]?.id ?? "codex") : defaultProvider
+  const fineTuneCatalog = state.availableProviders.find((provider) => provider.id === fineTuneProvider)
+  const fineTunePreference = providerDefaults[fineTuneProvider]
+  const fineTuneMode = chatModeFromFlags(fineTunePreference.planMode, fineTunePreference.autoPlan)
+  const fineTuneEffort = "reasoningEffort" in fineTunePreference.modelOptions ? fineTunePreference.modelOptions.reasoningEffort : undefined
+
   return (
     <>
       {providersError ? <SettingsErrorBanner message={providersError} /> : null}
+      {recommendedEngineOptions.length > 0 ? (
+        <div className="mb-5">
+          <RecommendationCard
+            options={recommendedEngineOptions}
+            labels={{ title: "选择默认代理引擎", alternatives: "其他引擎", otherOptions: "可用引擎", accepted: "已设为默认" }}
+            onAccept={(option) => handleDefaultProviderChange(option.key as AgentProvider)}
+          />
+        </div>
+      ) : null}
+      {fineTuneCatalog && fineTuneCatalog.efforts.length > 0 ? (
+        <div className="mb-5">
+          <FineTuneCard
+            fields={[]}
+            options={fineTuneCatalog.efforts.map((effort) => effort.id)}
+            initialSegment={fineTuneMode === "full-access" ? 0 : fineTuneMode === "plan" ? 1 : 2}
+            initialType={fineTuneEffort}
+            segments={["full", "plan", "auto"]}
+            labels={{ title: `${fineTuneCatalog.label} 默认参数`, layout: "运行模式", type: "推理强度", placeholder: "选择强度", adjust: "可调整", edited: "已更新" }}
+            onChange={(next) => {
+              const mode: ChatMode = next.segment === 0 ? "full-access" : next.segment === 1 ? "plan" : "auto-plan"
+              handleProviderDefaultModeChange(fineTuneProvider, fineTuneCatalog.supportsAutoPlanMode ? mode : mode === "auto-plan" ? "plan" : mode)
+              if (next.type !== "选择强度") handleProviderDefaultModelOptionsChange(fineTuneProvider, { type: `${fineTuneProvider}ReasoningEffort`, effort: next.type })
+            }}
+          />
+        </div>
+      ) : null}
       <div className="space-y-3 pb-6">
         <SettingsRow def={SETTINGS_ROWS.modelProfiles} alignStart fullWidth>
           <ModelProfilesPanel

@@ -135,7 +135,7 @@ export function inferModelProfilePresetId(input: {
 }
 
 export function groupProfilesByPreset(
-  profiles: readonly Array<Omit<ModelProfile, "presetId"> & { presetId?: unknown }>,
+  profiles: ReadonlyArray<Omit<ModelProfile, "presetId"> & { presetId?: unknown }>,
 ): Record<ModelProfilePresetId, ModelProfile[]> {
   const groups = Object.fromEntries(
     MODEL_PROFILE_PRESET_IDS.map((id) => [id, [] as ModelProfile[]]),

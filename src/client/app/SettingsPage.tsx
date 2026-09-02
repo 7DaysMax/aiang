@@ -14,6 +14,7 @@ import { getResolvedKeybindings } from "../lib/keybindings"
 import { cn } from "../lib/utils"
 import { ChangelogSection, useChangelog } from "./settings/ChangelogSection"
 import { GeneralSection } from "./settings/GeneralSection"
+import { AppearanceSection } from "./settings/AppearanceSection"
 import { KeybindingsSection } from "./settings/KeybindingsSection"
 import { LabsSection } from "./settings/LabsSection"
 import { ProvidersSection } from "./settings/ProvidersSection"
@@ -302,6 +303,8 @@ export function SettingsPage() {
 
                 {selectedPage === "general" ? (
                   <GeneralSection state={state} appVersion={appVersion} />
+                ) : selectedPage === "appearance" ? (
+                  <AppearanceSection state={state} />
                 ) : selectedPage === "providers" ? (
                   <ProvidersSection state={state} />
                 ) : selectedPage === "keybindings" ? (
@@ -313,7 +316,7 @@ export function SettingsPage() {
                 ) : selectedPage === "usage" ? (
                   <UsageSection state={state} />
                 ) : selectedPage === "status" ? (
-                  <StatusSection />
+                  <StatusSection state={state} />
                 ) : selectedPage === "labs" ? (
                   <LabsSection state={state} appVersion={appVersion} />
                 ) : (

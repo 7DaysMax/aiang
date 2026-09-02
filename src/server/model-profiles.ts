@@ -10,6 +10,7 @@ import {
   type ModelProfile,
   type ModelProfileProtocol,
 } from "../shared/model-profile"
+import { normalizeDeepSeekModelId } from "../shared/types"
 import { DEEPSEEK_BASE_URL, DEFAULT_DEEPSEEK_MODEL, resolveDeepSeekApiKey } from "./deepseek-agent"
 
 export type ModelRuntime =
@@ -98,6 +99,29 @@ export function modelRuntimeKey(runtime = resolveModelRuntime()): string {
   if (runtime.kind === "profile") return profileRuntimeKey(runtime.profile)
   if (runtime.kind === "legacy") return `legacy:${runtime.baseUrl}:${runtime.modelId}`
   return "none"
+}
+
+/**
+ * Pick the model sent to a profile-backed engine.
+ *
+ * A DeepSeek profile is an access channel for the whole official DeepSeek
+ * catalog, so an explicit DeepSeek model picked in the composer must win over
+ * the profile's saved default. Other profile types keep their fixed model id:
+ * a Claude/OpenRouter/custom profile may not expose DeepSeek model names at all.
+ */
+export function resolveRuntimeModelId(runtime: ModelRuntime, requestedModel: string): string {
+  const requested = requestedModel.trim()
+  if (runtime.kind === "none") return requested
+
+  const isDeepSeekRuntime = runtime.kind === "legacy"
+    || runtime.profile.presetId === "deepseek"
+    || /deepseek/i.test(runtime.profile.baseUrl)
+  if (isDeepSeekRuntime) {
+    if (requested.startsWith("deepseek-")) return normalizeDeepSeekModelId(requested)
+    return normalizeDeepSeekModelId(runtime.modelId)
+  }
+
+  return runtime.modelId.trim() || requested
 }
 
 export function buildCodexConfigFromProfile(profile: ModelProfile): string {

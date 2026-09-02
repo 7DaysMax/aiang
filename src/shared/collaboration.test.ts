@@ -54,11 +54,47 @@ describe("collaboration helpers", () => {
     expect(verdict.summary).toContain("缺测试")
   })
 
-  test("treats a missing verdict as fail", () => {
+  test("parses PASS/FAIL split across streamed delta entries", () => {
+    // 流式输出把同一段文本拆成多个 assistant_text 增量条目，"PASS" 会
+    // 变成 "P" + "ASS" 落在不同 entry，join 后是 "P\n\nASS"。
+    const passed = parseCollaborationVerdict([
+      entry({ kind: "user_prompt", content: "加按钮" }),
+      entry({ kind: "assistant_text", text: "P" }),
+      entry({ kind: "assistant_text", text: "ASS" }),
+      entry({ kind: "assistant_text", text: "验收依据：按钮已加" }),
+      entry({ kind: "result", subtype: "success", isError: false, durationMs: 4, result: "" }),
+    ])
+    expect(passed.pass).toBe(true)
+    expect(passed.summary).toContain("验收依据")
+
+    const failed = parseCollaborationVerdict([
+      entry({ kind: "assistant_text", text: "F" }),
+      entry({ kind: "assistant_text", text: "AIL" }),
+      entry({ kind: "assistant_text", text: "缺测试" }),
+    ])
+    expect(failed.pass).toBe(false)
+    expect(failed.summary).toContain("缺测试")
+  })
+
+  test("keeps the verdict before a whitespace-only streamed delta", () => {
+    const passed = parseCollaborationVerdict([
+      entry({ kind: "assistant_text", messageId: "review-1", text: "PASS" }),
+      entry({ kind: "assistant_text", messageId: "review-1", text: "\n\n" }),
+      entry({ kind: "assistant_text", messageId: "review-1", text: "输出与要求一致。" }),
+      entry({ kind: "result", subtype: "success", isError: false, durationMs: 4, result: "" }),
+    ])
+
+    expect(passed.pass).toBe(true)
+    expect(passed.summary).toStartWith("PASS")
+  })
+
+  test("treats a missing verdict as pass with an explicit note", () => {
+    // 验收回合没有产出文本（只 thinking 或流中断）：无意见 = 没有发现必须
+    // 改的问题，应视为通过；占位文案不能被当作 FAIL 意见继续发给实现者。
     const verdict = parseCollaborationVerdict([
       entry({ kind: "result", subtype: "success", isError: false, durationMs: 1, result: "" }),
     ])
-    expect(verdict.pass).toBe(false)
+    expect(verdict.pass).toBe(true)
     expect(verdict.summary).toContain("没有写出结论")
   })
 

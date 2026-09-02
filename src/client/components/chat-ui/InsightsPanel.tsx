@@ -34,6 +34,7 @@ import { cn } from "../../lib/utils"
 import { useDeepSeekBalanceStore } from "../../stores/deepSeekBalanceStore"
 import { Button } from "../ui/button"
 import { ScrollArea } from "../ui/scroll-area"
+import InsightCards, { type InsightPage } from "@/components/primitives/InsightCards"
 
 const PROVIDER_LABELS: Record<string, string> = {
   youmi: "Youmi",
@@ -211,6 +212,26 @@ export function InsightsPanel({
   const closeToCompaction = compactionThreshold !== null
     && !nearCompaction
     && usedTokens >= compactionThreshold - WARNING_THRESHOLD_BUFFER_TOKENS
+  const liveInsightPages = useMemo<InsightPage[]>(() => [
+    {
+      key: "context",
+      prose: <>当前上下文已使用 <span className="font-medium text-ink">{formatContextWindowTokens(usedTokens)}</span>{snapshot?.maxTokens ? <> / {formatContextWindowTokens(snapshot.maxTokens)}</> : null}。</>,
+      Card: () => <div className="grid grid-cols-2 gap-2"><StatCard icon={<Database />} label="上下文" value={usedPercentage === null ? "—" : `${usedPercentage.toFixed(1)}%`} /><StatCard icon={<Layers />} label="距压缩" value={compactionDistance === null ? "—" : formatContextWindowTokens(compactionDistance)} /></div>,
+      pill: "刷新余额与用量",
+    },
+    {
+      key: "session",
+      prose: <>本会话累计 <span className="font-medium text-ink">{requestCount}</span> 次请求，缓存命中率 {formatRate(dockMetrics.averageCacheHitRate)}。</>,
+      Card: () => <div className="grid grid-cols-2 gap-2"><StatCard icon={<Send />} label="请求" value={String(requestCount)} /><StatCard icon={<Sigma />} label="Tokens" value={formatContextWindowTokens(dockMetrics.sessionTokens)} /></div>,
+      pill: "刷新余额与用量",
+    },
+    {
+      key: "model",
+      prose: <>当前主模型来自 <span className="font-medium text-ink">{PROVIDER_LABELS[mainModel.provider] ?? mainModel.provider}</span>。</>,
+      Card: () => <div className="grid grid-cols-2 gap-2"><StatCard icon={<Cpu />} label="模型" value={mainModel.model ?? "—"} /><StatCard icon={<Coins />} label="余额" value={balanceLabel} /></div>,
+      pill: "刷新余额与用量",
+    },
+  ], [balanceLabel, compactionDistance, dockMetrics.averageCacheHitRate, dockMetrics.sessionTokens, mainModel.model, mainModel.provider, requestCount, snapshot?.maxTokens, usedPercentage, usedTokens])
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -228,6 +249,9 @@ export function InsightsPanel({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-4 p-4">
+          <section className="rounded-xl border border-border bg-card/40 p-4">
+            <InsightCards pages={liveInsightPages} labels={{ title: "会话洞察" }} compact onAction={() => void refreshBalance()} />
+          </section>
           {/* 上下文窗口 */}
           <section className="rounded-xl border border-border bg-card/40 p-4">
             <div className="mb-3 flex items-center justify-between gap-2">

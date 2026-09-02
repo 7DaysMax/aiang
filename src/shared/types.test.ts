@@ -66,31 +66,42 @@ describe("shared model normalization", () => {
     expect(normalizeDeepSeekModelId("")).toBe("deepseek-v4-flash")
   })
 
-  test("normalizes legacy Codex aliases and defaults to the latest catalog model", () => {
-    expect(normalizeCodexModelId()).toBe("deepseek-v4-flash")
-    expect(normalizeCodexModelId("gpt-5.6")).toBe("deepseek-v4-flash")
-    expect(normalizeCodexModelId("deepseek-chat")).toBe("deepseek-v4-flash")
-    expect(normalizeCodexModelId("deepseek-reasoner")).toBe("deepseek-v4-pro")
-    expect(normalizeCodexModelId("deepseek-v4-pro")).toBe("deepseek-v4-pro")
-    expect(normalizeCodexModelId("not-a-real-model")).toBe("deepseek-v4-flash")
+  test("exposes the current official DeepSeek model catalog", () => {
+    expect(PROVIDERS.find((provider) => provider.id === "deepseek")?.models.map((model) => model.id)).toEqual([
+      "deepseek-v4-flash",
+      "deepseek-v4-pro",
+      "deepseek-v4-flash-vision-exp",
+    ])
   })
 
-  test("exposes Codex engine model reasoning efforts (DeepSeek V4 tiers)", () => {
-    expect(getCodexReasoningOptions("deepseek-v4-flash").map((option) => option.id)).toEqual([
-      "low", "high", "max",
+  test("uses the official Codex default and preserves runtime-discovered ids", () => {
+    expect(normalizeCodexModelId()).toBe("gpt-5.6-sol")
+    expect(normalizeCodexModelId("gpt-5.6-terra")).toBe("gpt-5.6-terra")
+    expect(normalizeCodexModelId("gpt-future")).toBe("gpt-future")
+    // Incorrect values persisted by the old third-party Codex catalog migrate
+    // back to the official default.
+    expect(normalizeCodexModelId("deepseek-chat")).toBe("gpt-5.6-sol")
+    expect(normalizeCodexModelId("deepseek-reasoner")).toBe("gpt-5.6-sol")
+    expect(normalizeCodexModelId("deepseek-v4-pro")).toBe("gpt-5.6-sol")
+  })
+
+  test("exposes official Codex per-model reasoning efforts", () => {
+    expect(getCodexReasoningOptions("gpt-5.6-sol").map((option) => option.id)).toEqual([
+      "low", "medium", "high", "xhigh", "max", "ultra",
     ])
-    expect(getCodexReasoningOptions("deepseek-v4-pro").map((option) => option.id)).toEqual([
-      "low", "high", "max",
+    expect(getCodexReasoningOptions("gpt-5.6-luna").map((option) => option.id)).toEqual([
+      "low", "medium", "high", "xhigh", "max",
     ])
   })
 
   test("preserves all supported Codex engine model and reasoning combinations", () => {
     const combinations = [
-      ["deepseek-v4-flash", ["low", "high", "max"]],
-      ["deepseek-v4-pro", ["low", "high", "max"]],
+      ["gpt-5.6-sol", ["low", "medium", "high", "xhigh", "max", "ultra"]],
+      ["gpt-5.6-terra", ["low", "medium", "high", "xhigh", "max", "ultra"]],
+      ["gpt-5.6-luna", ["low", "medium", "high", "xhigh", "max"]],
     ] as const
 
-    expect(combinations.reduce((count, [, efforts]) => count + efforts.length, 0)).toBe(6)
+    expect(combinations.reduce((count, [, efforts]) => count + efforts.length, 0)).toBe(17)
     for (const [model, efforts] of combinations) {
       for (const effort of efforts) {
         expect(normalizeCodexReasoningEffort(model, effort)).toBe(effort)
@@ -99,18 +110,18 @@ describe("shared model normalization", () => {
   })
 
   test("normalizes unsupported Codex engine reasoning efforts", () => {
-    expect(normalizeCodexReasoningEffort("deepseek-v4-flash", "medium")).toBe("high")
-    expect(normalizeCodexReasoningEffort("deepseek-v4-flash", "minimal")).toBe("high")
-    expect(normalizeCodexReasoningEffort("deepseek-v4-flash", "unknown")).toBe("high")
-    expect(normalizeCodexReasoningEffort("deepseek-v4-pro", "max")).toBe("max")
+    expect(normalizeCodexReasoningEffort("gpt-5.6-sol", "minimal")).toBe("low")
+    expect(normalizeCodexReasoningEffort("gpt-5.6-sol", "unknown")).toBe("low")
+    expect(normalizeCodexReasoningEffort("gpt-5.6-luna", "ultra")).toBe("max")
+    expect(normalizeCodexReasoningEffort("gpt-5.6-luna", "max")).toBe("max")
   })
 
   test("recognizes public and legacy Codex reasoning values", () => {
     expect(isCodexReasoningEffort("max")).toBe(true)
     expect(isCodexReasoningEffort("ultra")).toBe(true)
     expect(isCodexReasoningEffort("minimal")).toBe(true)
-    expect(getCodexReasoningOptions("deepseek-v4-flash").find((option) => option.id === "high")?.label).toBe("High")
-    expect(getCodexReasoningOptions("deepseek-v4-pro").find((option) => option.id === "max")?.label).toBe("Max")
+    expect(getCodexReasoningOptions("gpt-5.6-sol").find((option) => option.id === "high")?.label).toBe("High")
+    expect(getCodexReasoningOptions("gpt-5.6-luna").find((option) => option.id === "max")?.label).toBe("Max")
   })
 
   test("uses declarative metadata for Claude max-effort support", () => {

@@ -60,6 +60,7 @@ import {
 } from "./attribution"
 import {
   applyClaudeSdkModels,
+  applyCodexModels,
   applyCursorModels,
   type ClaudeSdkModelInfo,
   cursorModelIdForOptions,
@@ -91,7 +92,7 @@ import {
   engineSupportsCollaboration,
   parseCollaborationVerdict,
 } from "../shared/collaboration"
-import { modelRuntimeKey, resolveModelRuntime, syncCodexFromModelRuntime } from "./model-profiles"
+import { modelRuntimeKey, resolveModelRuntime, resolveRuntimeModelId } from "./model-profiles"
 import { penguinProviderForProfile } from "../shared/model-profile"
 import { PartialAssistantAccumulator } from "./claude-partial-stream"
 
@@ -165,6 +166,15 @@ interface ActiveTurn {
   collaboration?: boolean
   collaborationPhase?: "implement" | "review"
   collaborationAttempts?: number
+  /** 协作链路的主引擎；临时实现/验收回合结束后恢复它。 */
+  controllerProvider?: AgentProvider
+  controllerModel?: string
+  controllerEffort?: string
+  controllerServiceTier?: "fast"
+  /** 协作验收回合使用的引擎；缺省 = 主引擎。 */
+  reviewProvider?: AgentProvider
+  /** review 回合开始前的实现引擎，review 结束后要恢复回去。 */
+  implementProvider?: AgentProvider
 }
 
 interface ClaudeSessionHandle {
@@ -315,7 +325,9 @@ function resolveClaudeHarness(
     provider === "deepseek" || model.startsWith("deepseek-") || openAiCompat
       ? "deepseek"
       : "claude"
-  const wireModel = (openAiCompat || anthropicRelay) && runtime.modelId ? runtime.modelId : model
+  const wireModel = openAiCompat || anthropicRelay
+    ? resolveRuntimeModelId(runtime, model)
+    : model
   return { engine, wireModel, runtimeKey: modelRuntimeKey(runtime) }
 }
 
@@ -409,6 +421,8 @@ interface SendMessageOptions {
   planMode?: boolean
   autoPlan?: boolean
   collaboration?: boolean
+  implementationProvider?: AgentProvider
+  reviewProvider?: AgentProvider
 }
 
 function stringFromUnknown(value: unknown) {
@@ -1026,8 +1040,8 @@ async function startClaudeSession(args: {
       settingSources: ["user", "project", "local"],
       // Append-only: the claude_code preset stays intact, Kanna's git
       // attribution rides on the end of it (see attribution.ts).
-      // 识图：DeepSeek V4 是文本模型，贴图时提示 agent 用 vision MCP
-      // server 的 describe_image 工具把图片转成文字描述。
+      // 识图：Youmi 当前的附件链路统一通过 vision MCP server 的
+      // describe_image 工具把图片转成文字描述。
       systemPrompt: {
         type: "preset",
         preset: "claude_code",
@@ -1056,7 +1070,7 @@ async function startClaudeSession(args: {
               const { CLAUDECODE: _, ...env } = process.env
               return withVendoredRgOnPath({
                 ...env,
-                ...buildCcbEnv(runtime.apiKey, runtime.modelId || wireModel, args.effort, {
+                ...buildCcbEnv(runtime.apiKey, wireModel, args.effort, {
                   baseUrl: runtime.baseUrl || undefined,
                 }),
               })
@@ -1174,6 +1188,7 @@ export class AgentCoordinator {
   private readonly checkSessionArtifactFn: NonNullable<AgentCoordinatorArgs["checkSessionArtifact"]>
   private reportBackgroundError: ((message: string) => void) | null = null
   private onClaudeRateLimit: ((info: ClaudeRateLimitInfoRaw) => void) | null = null
+  private codexModelCatalogApplied = false
   private cursorModelCatalogApplied = false
   readonly activeTurns = new Map<string, ActiveTurn>()
   readonly drainingStreams = new Map<string, { turn: HarnessTurn }>()
@@ -1298,6 +1313,25 @@ export class AgentCoordinator {
       }
     } catch {
       // Keep the static fallback catalog; the next cursor turn retries.
+    }
+  }
+
+  /**
+   * Overlay the official account-scoped Codex `model/list` response on the
+   * cold-start catalog. Failures are expected while logged out or on an older
+   * CLI, so startup remains usable and a later sign-in/turn retries.
+   */
+  async refreshCodexModelCatalog() {
+    if (this.codexModelCatalogApplied) return
+    try {
+      const models = await this.codexManager.listModels(homedir())
+      if (!models?.length) return
+      this.codexModelCatalogApplied = true
+      if (applyCodexModels(models)) {
+        this.emitStateChange(undefined, { immediate: true })
+      }
+    } catch {
+      // Keep the official static fallback catalog; the next Codex turn retries.
     }
   }
 
@@ -1430,6 +1464,8 @@ export class AgentCoordinator {
       planMode: options?.planMode,
       autoPlan: options?.autoPlan,
       collaboration: options?.collaboration,
+      implementationProvider: options?.implementationProvider,
+      reviewProvider: options?.reviewProvider,
     })
     this.emitStateChange(chatId)
     return queued
@@ -1438,8 +1474,16 @@ export class AgentCoordinator {
   private async dequeueAndStartQueuedMessage(chatId: string, queuedMessage: QueuedChatMessage, options?: { steered?: boolean }) {
     await this.store.removeQueuedMessage(chatId, queuedMessage.id)
     const chat = this.store.requireChat(chatId)
-    const provider = this.resolveProvider(queuedMessage, chat.provider)
-    const settings = this.getProviderSettings(provider, queuedMessage)
+    const controllerProvider = this.resolveProvider(queuedMessage, chat.provider)
+    const collaboration = Boolean(queuedMessage.collaboration) && engineSupportsCollaboration(controllerProvider)
+    const provider = collaboration && queuedMessage.implementationProvider
+      && engineSupportsCollaboration(queuedMessage.implementationProvider)
+      ? queuedMessage.implementationProvider
+      : controllerProvider
+    const controllerSettings = this.getProviderSettings(controllerProvider, queuedMessage)
+    const settings = provider === controllerProvider
+      ? controllerSettings
+      : this.getProviderSettings(provider, {})
     await this.startTurnForChat({
       chatId,
       provider,
@@ -1452,8 +1496,13 @@ export class AgentCoordinator {
       autoPlan: settings.autoPlan,
       appendUserPrompt: true,
       steered: options?.steered,
-      collaboration: Boolean(queuedMessage.collaboration) && engineSupportsCollaboration(provider),
+      collaboration,
       collaborationPhase: "implement",
+      controllerProvider,
+      controllerModel: controllerSettings.model,
+      controllerEffort: controllerSettings.effort,
+      controllerServiceTier: controllerSettings.serviceTier,
+      reviewProvider: queuedMessage.reviewProvider,
     })
   }
 
@@ -1472,9 +1521,19 @@ export class AgentCoordinator {
     await this.maybeStartNextQueuedMessage(chatId)
   }
 
+  private async continueAfterUnsuccessfulTurn(chatId: string) {
+    // Keep the transient provider recorded until the next queued/main-engine
+    // turn starts. startTurnForChat will then perform the normal handoff and
+    // preserve transcript context instead of merely relabeling a stale token.
+    await this.maybeStartNextQueuedMessage(chatId)
+  }
+
   private async maybeStartCollaborationReview(chatId: string, settled: ActiveTurn): Promise<boolean> {
     if (!settled.collaboration || !engineSupportsCollaboration(settled.provider)) return false
     if (settled.collaborationPhase === "review") {
+      // 默认验收引擎就是主引擎，因此常规链路此时已经自然回归主引擎。
+      // 若用户显式选择第三个验收引擎，不要只改 provider 标签：下一条
+      // 主引擎消息会走标准 handoff，完整交接 transcript 与 session。
       const { pass, summary } = parseCollaborationVerdict(this.store.getMessages(chatId))
       await this.store.appendMessage(chatId, timestamped({
         kind: "collaboration_review",
@@ -1485,22 +1544,50 @@ export class AgentCoordinator {
       return false
     }
     const attempts = settled.collaborationAttempts ?? 0
-    if (attempts >= COLLABORATION_MAX_AUTO_REVIEWS) return false
+    if (attempts >= COLLABORATION_MAX_AUTO_REVIEWS) {
+      return false
+    }
 
+    // 跨引擎协作：验收回合换用 reviewProvider（缺省 = 主引擎）。
+    // review 回合会触发 handoff 把 transcript 上下文交接给验收引擎，
+    // 验收引擎能读到完整对话记录来判定 PASS/FAIL。
+    const requestedReviewProvider = settled.reviewProvider ?? settled.controllerProvider ?? settled.provider
+    const reviewProvider = engineSupportsCollaboration(requestedReviewProvider)
+      ? requestedReviewProvider
+      : (settled.controllerProvider ?? settled.provider)
+    const reviewSettings = reviewProvider === settled.controllerProvider && settled.controllerModel
+      ? {
+        model: settled.controllerModel,
+        effort: settled.controllerEffort,
+        serviceTier: settled.controllerServiceTier,
+      }
+      : reviewProvider === settled.provider
+        ? {
+          model: settled.model,
+          effort: settled.effort,
+          serviceTier: settled.serviceTier,
+        }
+        : this.getProviderSettings(reviewProvider, {})
     await this.startTurnForChat({
       chatId,
-      provider: settled.provider,
+      provider: reviewProvider,
       content: COLLABORATION_REVIEW_PROMPT,
       attachments: [],
-      model: settled.model,
-      effort: settled.effort,
-      serviceTier: settled.serviceTier,
+      model: reviewSettings.model,
+      effort: reviewSettings.effort,
+      serviceTier: reviewSettings.serviceTier,
       planMode: false,
       autoPlan: false,
       appendUserPrompt: false,
       collaboration: true,
       collaborationPhase: "review",
       collaborationAttempts: attempts + 1,
+      controllerProvider: settled.controllerProvider,
+      controllerModel: settled.controllerModel,
+      controllerEffort: settled.controllerEffort,
+      controllerServiceTier: settled.controllerServiceTier,
+      reviewProvider,
+      implementProvider: settled.provider,
     })
     return true
   }
@@ -1666,6 +1753,13 @@ export class AgentCoordinator {
     collaboration?: boolean
     collaborationPhase?: "implement" | "review"
     collaborationAttempts?: number
+    controllerProvider?: AgentProvider
+    controllerModel?: string
+    controllerEffort?: string
+    controllerServiceTier?: "fast"
+    reviewProvider?: AgentProvider
+    /** review 回合开始前的实现引擎，review 结束后要恢复回去。 */
+    implementProvider?: AgentProvider
   }) {
 
     // Close any lingering draining stream before starting a new turn.
@@ -1938,7 +2032,10 @@ export class AgentCoordinator {
         }
       }
     } else {
-      syncCodexFromModelRuntime()
+      // Official Codex owns its account/configuration. Third-party model
+      // profiles belong to the Youmi/DeepSeek/Reasonix engines and must never
+      // overwrite ~/.codex when this native provider is selected.
+      void this.refreshCodexModelCatalog()
       const started = await this.codexManager.startSession({
         chatId: args.chatId,
         cwd: project.localPath,
@@ -1983,6 +2080,12 @@ export class AgentCoordinator {
       collaboration: args.collaboration,
       collaborationPhase: args.collaborationPhase,
       collaborationAttempts: args.collaborationAttempts,
+      controllerProvider: args.controllerProvider,
+      controllerModel: args.controllerModel,
+      controllerEffort: args.controllerEffort,
+      controllerServiceTier: args.controllerServiceTier,
+      reviewProvider: args.reviewProvider,
+      implementProvider: args.implementProvider,
       hasFinalResult: false,
       cancelRequested: false,
       cancelRecorded: false,
@@ -2049,7 +2152,7 @@ export class AgentCoordinator {
       // so the agent id in the session prompt can be stale. Re-state it on the
       // turn text (wire-only — the transcript stores args.content) from the
       // drift onward.
-      const claudeAgentId = buildKannaAgentId(args.provider, args.model)
+      const claudeAgentId = buildKannaAgentId(args.provider, session.model)
       const claudePrompt = buildPromptText(wireContent, args.attachments)
       await session.session.sendPrompt(
         session.promptAgentId === claudeAgentId
@@ -2142,9 +2245,9 @@ export class AgentCoordinator {
       this.claudeSessions.set(args.chatId, session)
       void this.runClaudeSession(session)
     } else {
-      if (session.model !== args.model) {
-        await session.session.setModel(args.model)
-        session.model = args.model
+      if (session.model !== wireModel) {
+        await session.session.setModel(wireModel)
+        session.model = wireModel
       }
       if (session.planMode !== args.planMode) {
         await session.session.setPermissionMode(args.planMode)
@@ -2198,7 +2301,7 @@ export class AgentCoordinator {
       const runtime = resolveModelRuntime()
       const started = await startReasonixSession({
         cwd: args.localPath,
-        model: runtime.modelId || args.model,
+        model: resolveRuntimeModelId(runtime, args.model),
         apiKey: runtime.apiKey,
         onToolRequest: args.onToolRequest,
       })
@@ -2267,7 +2370,7 @@ export class AgentCoordinator {
             this.activeTurns.delete(session.chatId)
             if (!active.cancelRequested) {
               if (active.turnSucceeded) await this.continueAfterSuccessfulTurn(session.chatId, active)
-              else await this.maybeStartNextQueuedMessage(session.chatId)
+              else await this.continueAfterUnsuccessfulTurn(session.chatId)
             }
           }
         }
@@ -2339,7 +2442,7 @@ export class AgentCoordinator {
       const runtime = resolveModelRuntime()
       const started = await startYoumiSession({
         cwd: args.localPath,
-        model: runtime.modelId || args.model,
+        model: resolveRuntimeModelId(runtime, args.model),
         effort: args.effort,
         apiKey: runtime.apiKey,
         baseUrl: runtime.kind === "none" ? undefined : runtime.baseUrl,
@@ -2411,7 +2514,7 @@ export class AgentCoordinator {
             this.activeTurns.delete(session.chatId)
             if (!active.cancelRequested) {
               if (active.turnSucceeded) await this.continueAfterSuccessfulTurn(session.chatId, active)
-              else await this.maybeStartNextQueuedMessage(session.chatId)
+              else await this.continueAfterUnsuccessfulTurn(session.chatId)
             }
           }
         }
@@ -2481,12 +2584,22 @@ export class AgentCoordinator {
         planMode: command.planMode,
         autoPlan: command.autoPlan,
         collaboration: command.collaboration,
+        implementationProvider: command.implementationProvider,
+        reviewProvider: command.reviewProvider,
       })
       return { chatId, queuedMessageId: queuedMessage.id, queued: true as const }
     }
 
-    const provider = this.resolveProvider(command, chat.provider)
-    const settings = this.getProviderSettings(provider, command)
+    const controllerProvider = this.resolveProvider(command, chat.provider)
+    const collaboration = Boolean(command.collaboration) && engineSupportsCollaboration(controllerProvider)
+    const provider = collaboration && command.implementationProvider
+      && engineSupportsCollaboration(command.implementationProvider)
+      ? command.implementationProvider
+      : controllerProvider
+    const controllerSettings = this.getProviderSettings(controllerProvider, command)
+    const settings = provider === controllerProvider
+      ? controllerSettings
+      : this.getProviderSettings(provider, {})
     this.analytics.track("message_sent")
     await this.startTurnForChat({
       chatId,
@@ -2499,8 +2612,13 @@ export class AgentCoordinator {
       planMode: settings.planMode,
       autoPlan: settings.autoPlan,
       appendUserPrompt: true,
-      collaboration: Boolean(command.collaboration) && engineSupportsCollaboration(provider),
+      collaboration,
       collaborationPhase: "implement",
+      controllerProvider,
+      controllerModel: controllerSettings.model,
+      controllerEffort: controllerSettings.effort,
+      controllerServiceTier: controllerSettings.serviceTier,
+      reviewProvider: command.reviewProvider,
     })
 
 
@@ -2516,6 +2634,8 @@ export class AgentCoordinator {
       planMode: command.planMode,
       autoPlan: command.autoPlan,
       collaboration: command.collaboration,
+      implementationProvider: command.implementationProvider,
+      reviewProvider: command.reviewProvider,
     })
     return { queuedMessageId: queuedMessage.id }
   }
@@ -2825,7 +2945,7 @@ export class AgentCoordinator {
           this.activeTurns.delete(session.chatId)
           if (!active.cancelRequested) {
             if (active.turnSucceeded) await this.continueAfterSuccessfulTurn(session.chatId, active)
-            else await this.maybeStartNextQueuedMessage(session.chatId)
+            else await this.continueAfterUnsuccessfulTurn(session.chatId)
           }
         }
 
@@ -2999,6 +3119,12 @@ export class AgentCoordinator {
             collaboration: active.collaboration,
             collaborationPhase: active.collaborationPhase,
             collaborationAttempts: active.collaborationAttempts,
+            controllerProvider: active.controllerProvider,
+            controllerModel: active.controllerModel,
+            controllerEffort: active.controllerEffort,
+            controllerServiceTier: active.controllerServiceTier,
+            reviewProvider: active.reviewProvider,
+            implementProvider: active.implementProvider,
           })
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
@@ -3018,7 +3144,7 @@ export class AgentCoordinator {
       } else if (!active.cancelRequested) {
         try {
           if (active.turnSucceeded) await this.continueAfterSuccessfulTurn(active.chatId, active)
-          else await this.maybeStartNextQueuedMessage(active.chatId)
+          else await this.continueAfterUnsuccessfulTurn(active.chatId)
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           await this.store.appendMessage(

@@ -1,4 +1,5 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type DragEvent, type ReactNode, type RefObject } from "react"
+import { createPortal } from "react-dom"
 import type { GroupImperativeHandle } from "react-resizable-panels"
 import { useNavigate, useOutletContext } from "react-router-dom"
 import type { ChatInputHandle } from "../../components/chat-ui/ChatInput"
@@ -194,6 +195,7 @@ function useTranscriptPaddingBottom() {
 }
 
 const MOBILE_BREAKPOINT_PX = 768
+const RIGHT_SIDEBAR_OVERLAY_BREAKPOINT_PX = 1400
 const RIGHT_SIDEBAR_MIN_WORKSPACE_SIZE_PERCENT = 20
 const RIGHT_SIDEBAR_MAX_SIZE_PERCENT = 100 - RIGHT_SIDEBAR_MIN_WORKSPACE_SIZE_PERCENT
 
@@ -203,6 +205,10 @@ export const MAX_TERMINAL_MAIN_SIZES: [number, number] = [CHAT_MIN_SIZE_PERCENT,
 
 export function shouldUseMobileRightSidebarOverlay(viewportWidth: number) {
   return viewportWidth > 0 && viewportWidth < MOBILE_BREAKPOINT_PX
+}
+
+export function shouldUseRightSidebarOverlay(viewportWidth: number) {
+  return viewportWidth > 0 && viewportWidth < RIGHT_SIDEBAR_OVERLAY_BREAKPOINT_PX
 }
 
 /**
@@ -246,6 +252,17 @@ function useIsMobileViewport() {
   }, [])
 
   return shouldUseMobileRightSidebarOverlay(viewportWidth)
+}
+
+function useRightSidebarOverlayViewport() {
+  const [viewportWidth, setViewportWidth] = useState(() => (typeof window === "undefined" ? 0 : window.innerWidth))
+  useEffect(() => {
+    const update = () => setViewportWidth(window.innerWidth)
+    update()
+    window.addEventListener("resize", update)
+    return () => window.removeEventListener("resize", update)
+  }, [])
+  return shouldUseRightSidebarOverlay(viewportWidth)
 }
 
 function useFixedTerminalHeight(args: {
@@ -381,10 +398,14 @@ const MobileSidebarPane = memo(function MobileSidebarPane({
     return null
   }
 
-  return (
+  if (typeof document === "undefined") {
+    return null
+  }
+
+  return createPortal(
     <div
       className={cn(
-        "absolute inset-0 z-40 transition-opacity duration-300 ease-out",
+        "fixed inset-0 z-40 transition-opacity duration-300 ease-out",
         showRightSidebar ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0",
       )}
       aria-hidden={showRightSidebar ? undefined : true}
@@ -409,7 +430,8 @@ const MobileSidebarPane = memo(function MobileSidebarPane({
       >
         {content}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 })
 
@@ -560,6 +582,7 @@ export function ChatPage() {
   )
 
   const isMobileViewport = useIsMobileViewport()
+  const isRightSidebarOverlayViewport = useRightSidebarOverlayViewport()
   const terminalLayout = useMemo(() => {
     const mainSizes = getEffectiveTerminalMainSizes(storedTerminalLayout.mainSizes, isMobileViewport)
     return mainSizes === storedTerminalLayout.mainSizes ? storedTerminalLayout : { ...storedTerminalLayout, mainSizes }
@@ -571,7 +594,7 @@ export function ChatPage() {
   const showRightSidebar = Boolean(projectId && activeRightPanel !== "hidden")
   const showGitPanel = Boolean(projectId && activeRightPanel === "git")
   const shouldRenderRightSidebarLayout = Boolean(projectId)
-  const shouldRenderDesktopRightSidebarLayout = shouldRenderRightSidebarLayout && !isMobileViewport
+  const shouldRenderDesktopRightSidebarLayout = shouldRenderRightSidebarLayout && !isRightSidebarOverlayViewport
   const layoutWidth = useLayoutWidth(layoutRootRef)
   const effectiveRightSidebarSize = getRightSidebarSizePercent(
     globalRightSidebarSize ?? DEFAULT_RIGHT_SIDEBAR_SIZE,
@@ -1006,17 +1029,17 @@ export function ChatPage() {
   // it sees those the moment they change the scroll box.
 
   useEffect(() => {
-    if (!showRightSidebar || !isMobileViewport) return
+    if (!showRightSidebar || !isRightSidebarOverlayViewport) return
 
     const previousOverflow = document.body.style.overflow
     document.body.style.overflow = "hidden"
     return () => {
       document.body.style.overflow = previousOverflow
     }
-  }, [isMobileViewport, showRightSidebar])
+  }, [isRightSidebarOverlayViewport, showRightSidebar])
 
   useEffect(() => {
-    if (!showRightSidebar || !isMobileViewport) return
+    if (!showRightSidebar || !isRightSidebarOverlayViewport) return
 
     function handleEscape(event: KeyboardEvent) {
       if (event.key !== "Escape") return
@@ -1026,7 +1049,7 @@ export function ChatPage() {
 
     window.addEventListener("keydown", handleEscape)
     return () => window.removeEventListener("keydown", handleEscape)
-  }, [handleCloseRightSidebar, isMobileViewport, showRightSidebar])
+  }, [handleCloseRightSidebar, isRightSidebarOverlayViewport, showRightSidebar])
 
   // Following the stream is the list's job, via `maintainScrollAtEnd`. This
   // used to also force two `scrollToEnd`s per frame on message/status churn,
@@ -1036,7 +1059,7 @@ export function ChatPage() {
   // losing ones fought the winner and the result read as jitter.
 
   useLayoutEffect(() => {
-    if (!showRightSidebar || isMobileViewport || layoutWidth <= 0 || isRightSidebarAnimating.current) {
+    if (!showRightSidebar || isRightSidebarOverlayViewport || layoutWidth <= 0 || isRightSidebarAnimating.current) {
       return
     }
 
@@ -1057,7 +1080,7 @@ export function ChatPage() {
     layoutWidth,
     rightSidebarPanelGroupRef,
     showRightSidebar,
-    isMobileViewport,
+    isRightSidebarOverlayViewport,
   ])
 
   const chatCard = (
@@ -1368,7 +1391,7 @@ export function ChatPage() {
       ) : (
         workspace
       )}
-      {isMobileViewport ? (
+      {isRightSidebarOverlayViewport ? (
         <MobileSidebarPane
           projectId={projectId}
           showRightSidebar={showRightSidebar}

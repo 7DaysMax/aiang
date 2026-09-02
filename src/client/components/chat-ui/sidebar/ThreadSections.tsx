@@ -20,7 +20,7 @@ import {
 } from "../../ui/context-menu"
 import { openContextMenuFromButton } from "../../open-external-menu"
 import { ThreadRow } from "./ThreadRow"
-import { GlideMenu } from "../../bui/GlideMenu"
+import GlideMenu from "@/components/primitives/GlideMenu"
 
 /**
  * Section header matching the Projects tab's collapsible project headers

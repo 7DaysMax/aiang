@@ -58,6 +58,13 @@ function expectedSettingsSnapshot(filePath: string, overrides: Partial<AppSettin
       preset: "cursor",
       commandTemplate: "cursor {path}",
     },
+    beautifulUi: {
+      loading: "Drive",
+      thinking: "Reasoning",
+      taskRows: "List",
+      promptBar: "Rounded",
+      codeBlock: "Code",
+    },
     defaultProvider: "last_used",
     providerDefaults: {
       claude: {
@@ -71,9 +78,9 @@ function expectedSettingsSnapshot(filePath: string, overrides: Partial<AppSettin
         autoPlan: false,
       },
       codex: {
-        model: "deepseek-v4-flash",
+        model: "gpt-5.6-sol",
         modelOptions: {
-          reasoningEffort: "high",
+          reasoningEffort: "low",
           fastMode: false,
         },
         planMode: false,
@@ -357,6 +364,35 @@ describe("AppSettingsManager", () => {
     manager.dispose()
   })
 
+  test("persists every Beautiful UI component variant as one merged preference object", async () => {
+    const filePath = await createTempFilePath()
+    const manager = new AppSettingsManager(filePath)
+    await manager.initialize()
+
+    await manager.writePatch({ beautifulUi: { loading: "Orbit", promptBar: "Pill" } })
+    const snapshot = await manager.writePatch({
+      beautifulUi: {
+        thinking: "Coding",
+        taskRows: "Capsules",
+        codeBlock: "Diff",
+      },
+    })
+
+    expect(snapshot.beautifulUi).toEqual({
+      loading: "Orbit",
+      thinking: "Coding",
+      taskRows: "Capsules",
+      promptBar: "Pill",
+      codeBlock: "Diff",
+    })
+
+    const reopened = new AppSettingsManager(filePath)
+    await reopened.initialize()
+    expect(reopened.getSnapshot().beautifulUi).toEqual(snapshot.beautifulUi)
+    reopened.dispose()
+    manager.dispose()
+  })
+
   test("visionService normalizes and survives a writePatch round-trip", async () => {
     const filePath = await createTempFilePath()
     const manager = new AppSettingsManager(filePath)
@@ -401,26 +437,26 @@ describe("AppSettingsManager", () => {
     const manager = new AppSettingsManager(filePath)
     await manager.initialize()
 
-    // 官方档位 low/high/max 原样保留。
+    // 旧版错误挂在 Codex 下的 DeepSeek 模型迁回官方默认。
     const flash = await manager.writePatch({
       providerDefaults: {
         codex: { model: "deepseek-v4-flash", modelOptions: { reasoningEffort: "max" } },
       },
     })
     expect(flash.providerDefaults.codex).toMatchObject({
-      model: "deepseek-v4-flash",
+      model: "gpt-5.6-sol",
       modelOptions: { reasoningEffort: "max", fastMode: false },
     })
 
-    // 旧 GPT-5.6 目录的档位/模型迁移到 DeepSeek V4：不支持档位回落默认 high。
+    // 官方 GPT-5.6 模型和 Ultra 原样保留。
     const sol = await manager.writePatch({
       providerDefaults: {
         codex: { model: "gpt-5.6-sol", modelOptions: { reasoningEffort: "ultra" } },
       },
     })
     expect(sol.providerDefaults.codex).toMatchObject({
-      model: "deepseek-v4-flash",
-      modelOptions: { reasoningEffort: "high", fastMode: false },
+      model: "gpt-5.6-sol",
+      modelOptions: { reasoningEffort: "ultra", fastMode: false },
     })
 
     const legacy = await manager.writePatch({
@@ -429,8 +465,8 @@ describe("AppSettingsManager", () => {
       },
     })
     expect(legacy.providerDefaults.codex).toMatchObject({
-      model: "deepseek-v4-flash",
-      modelOptions: { reasoningEffort: "high", fastMode: false },
+      model: "gpt-5.5",
+      modelOptions: { reasoningEffort: "xhigh", fastMode: false },
     })
 
     manager.dispose()

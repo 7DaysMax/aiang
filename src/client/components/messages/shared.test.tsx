@@ -68,7 +68,7 @@ describe("markdownComponents", () => {
       </Markdown>
     )
 
-    expect(html).toContain("data-bui-code-block")
+    expect(html).toContain('data-beautifului="code-block"')
     expect(html).toContain("TypeScript")
     expect(html).toContain("Copy")
     expect(html).toContain("export")
@@ -79,8 +79,8 @@ describe("markdownComponents", () => {
       <TranscriptMarkdown text={"Intro\n\n```ts\nconst a = 1"} streaming />
     )
 
-    expect(html).toContain("data-bui-code-block")
-    expect(html).toContain("bg-accent")
+    expect(html).toContain('data-beautifului="code-block"')
+    expect(html).toContain("stream-caret is-streaming")
     expect(html).toContain("const")
     expect(html).not.toContain("streaming-md")
   })

@@ -14,6 +14,12 @@ export const SIDEBAR_WIDTH_STORAGE_KEY = "kanna:sidebar-width"
 /** localStorage: per-chat 协作验收开关（动手后再自动跑一轮验收）。 */
 export const CHAT_COLLABORATION_STORAGE_KEY = "kanna:chat-collaboration"
 
+/** localStorage: per-chat 协作实现引擎（谁动手；缺省 = 主引擎）。 */
+export const CHAT_IMPLEMENTATION_PROVIDER_STORAGE_KEY = "kanna:chat-implementation-provider"
+
+/** localStorage: per-chat 协作验收引擎（谁验收；缺省 = 主引擎）。 */
+export const CHAT_REVIEW_PROVIDER_STORAGE_KEY = "kanna:chat-review-provider"
+
 /** localStorage: last action chosen in the open-external menu. */
 export const OPEN_EXTERNAL_SELECT_STORAGE_KEY = "kanna:last-open-external"
 

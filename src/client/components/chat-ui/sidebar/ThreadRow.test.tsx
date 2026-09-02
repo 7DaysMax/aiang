@@ -99,6 +99,6 @@ describe("ThreadRow", () => {
   })
 
   test("the active row gets the filled background", () => {
-    expect(render({ isActive: true })).toContain("bg-muted")
+    expect(render({ isActive: true })).toContain("bg-hover-2")
   })
 })

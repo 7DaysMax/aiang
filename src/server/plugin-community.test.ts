@@ -42,7 +42,7 @@ describe("plugin community catalog", () => {
 
   test("maps GitHub search hits and keeps featured MCP plugins on top", async () => {
     resetPluginCommunityCache()
-    const snapshot = await fetchPluginCommunity("", async () => new Response(JSON.stringify({
+    const snapshot = await fetchPluginCommunity("", (async () => new Response(JSON.stringify({
       total_count: 853,
       items: [
         {
@@ -61,7 +61,7 @@ describe("plugin community catalog", () => {
           stargazers_count: 1,
         },
       ],
-    }), { status: 200 }))
+    }), { status: 200 })) as unknown as typeof fetch)
 
     expect(snapshot.source).toBe("mixed")
     expect(snapshot.plugins[0]?.featured).toBe(true)
@@ -75,7 +75,7 @@ describe("plugin community catalog", () => {
 
   test("uses the curated fallback list when GitHub is down", async () => {
     resetPluginCommunityCache()
-    const snapshot = await fetchPluginCommunity("memory", async () => new Response("nope", { status: 403 }))
+    const snapshot = await fetchPluginCommunity("memory", (async () => new Response("nope", { status: 403 })) as unknown as typeof fetch)
     expect(snapshot.source).toBe("fallback")
     expect(snapshot.plugins.length).toBeGreaterThan(0)
     expect(snapshot.plugins.every((plugin) => (

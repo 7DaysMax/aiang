@@ -4,6 +4,8 @@ import { CLI_SUPPRESS_OPEN_ONCE_ENV_VAR } from "./restart"
 
 const originalRuntimeProfile = process.env.AIANG_RUNTIME_PROFILE
 const originalSuppressOpen = process.env[CLI_SUPPRESS_OPEN_ONCE_ENV_VAR]
+const originalDisableSelfUpdate = process.env.AIANG_DISABLE_SELF_UPDATE
+const originalKannaDisableSelfUpdate = process.env.KANNA_DISABLE_SELF_UPDATE
 
 beforeEach(() => {
   // Every test assumes the open-once suppression flag is unset; the parent
@@ -11,6 +13,11 @@ beforeEach(() => {
   // Kanna-managed terminal after a self-restart). Tests that need it set it
   // themselves; afterEach restores the inherited value for other suites.
   delete process.env[CLI_SUPPRESS_OPEN_ONCE_ENV_VAR]
+  // The self-update check must actually run in these tests; a parent process
+  // may have exported AIANG/KANNA_DISABLE_SELF_UPDATE=1, which short-circuits
+  // maybeSelfUpdate before fetchLatestVersion is ever called.
+  delete process.env.AIANG_DISABLE_SELF_UPDATE
+  delete process.env.KANNA_DISABLE_SELF_UPDATE
 })
 
 afterEach(() => {
@@ -23,6 +30,16 @@ afterEach(() => {
     delete process.env[CLI_SUPPRESS_OPEN_ONCE_ENV_VAR]
   } else {
     process.env[CLI_SUPPRESS_OPEN_ONCE_ENV_VAR] = originalSuppressOpen
+  }
+  if (originalDisableSelfUpdate === undefined) {
+    delete process.env.AIANG_DISABLE_SELF_UPDATE
+  } else {
+    process.env.AIANG_DISABLE_SELF_UPDATE = originalDisableSelfUpdate
+  }
+  if (originalKannaDisableSelfUpdate === undefined) {
+    delete process.env.KANNA_DISABLE_SELF_UPDATE
+  } else {
+    process.env.KANNA_DISABLE_SELF_UPDATE = originalKannaDisableSelfUpdate
   }
 })
 

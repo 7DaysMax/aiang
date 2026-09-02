@@ -14,7 +14,7 @@ import { QueuedUserMessage } from "../../components/messages/QueuedUserMessage"
 import { OpenLocalLinkProvider, type OpenLocalLinkTarget } from "../../components/messages/shared"
 import { ProcessingMessage } from "../../components/messages/ProcessingMessage"
 import { ChangesSummaryCard } from "../../components/messages/ChangesSummaryCard"
-import { SelectionBar } from "../../components/bui/SelectionBar"
+import { LiveSelectionActions } from "@/components/primitives/SelectionActions"
 import { ContextMenu, ContextMenuTrigger } from "../../components/ui/context-menu"
 import { OpenExternalContextMenuContent, openContextMenuFromButton } from "../../components/open-external-menu"
 import { TRANSCRIPT_PADDING_BOTTOM_OFFSET } from "../kannaStateHelpers"
@@ -357,6 +357,10 @@ const TranscriptScrollerBody = memo(function TranscriptScrollerBody({
     latestToolIds,
   }), [isProcessing, latestToolIds, localPath, messages])
   const resolvedRows = useStableResolvedRows(rawRows)
+  const hasActiveTranscriptRow = useMemo(
+    () => resolvedRows.some((row) => row.isLoading || (row.kind === "single" && row.isStreaming)),
+    [resolvedRows],
+  )
 
   useEffect(() => {
     setToolGroupExpanded({})
@@ -802,7 +806,7 @@ const TranscriptScrollerBody = memo(function TranscriptScrollerBody({
   // would sit 8px left of every tool icon above it.
   const listFooter = (
     <div className="mx-auto w-full max-w-[816px] px-2">
-      {isProcessing ? <ProcessingMessage status={runtimeStatus ?? undefined} /> : null}
+      {isProcessing && !hasActiveTranscriptRow ? <ProcessingMessage status={runtimeStatus ?? undefined} /> : null}
       {queuedMessages.map((message) => (
         <QueuedUserMessage
           key={message.id}
@@ -857,7 +861,7 @@ const TranscriptScrollerBody = memo(function TranscriptScrollerBody({
 
   return (
     <>
-      <SelectionBar />
+      <LiveSelectionActions />
       <OpenLocalLinkProvider onOpenLocalLink={handleOpenLocalLinkClick}>
         <MessageScroller className="h-full flex-1">
           <MessageScrollerViewport
@@ -902,7 +906,7 @@ const TranscriptScrollerBody = memo(function TranscriptScrollerBody({
                     <KannaTranscriptRow
                       row={row}
                       flash={flashRowId === row.id && rowLightsItself(row)}
-                      toolGroupExpanded={row.kind === "tool-group" ? (toolGroupExpanded[row.id] ?? true) : undefined}
+                      toolGroupExpanded={row.kind === "tool-group" ? (toolGroupExpanded[row.id] ?? row.isLoading) : undefined}
                       onToolGroupExpandedChange={handleToolGroupExpandedChange}
                       onAskUserQuestionSubmit={onAskUserQuestionSubmit}
                       onExitPlanModeConfirm={onExitPlanModeConfirm}
@@ -1069,7 +1073,7 @@ const TranscriptScrollerBody = memo(function TranscriptScrollerBody({
         className={cn(
           "absolute left-1/2 z-10 -translate-x-1/2 transition-all",
           showScrollButton
-            ? "scale-100 duration-300 ease-[cubic-bezier(0.34,1.56,0.64,1)]"
+            ? "scale-100 duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]"
             : "pointer-events-none scale-60 opacity-0 blur-sm duration-300 ease-out",
         )}
       >

@@ -150,7 +150,7 @@ export function normalizeClaudeUsage(
   }
 
   if (!raw) {
-    return { ...base, status: "unavailable", detail: "Could not read Claude usage." }
+    return { ...base, status: "unavailable", detail: "Could not read Claude usage.", updatedAt: now }
   }
 
   base.plan = raw.subscription_type ?? null
@@ -160,6 +160,7 @@ export function normalizeClaudeUsage(
       ...base,
       status: "unavailable",
       detail: "Plan limits are not available for this session (API key or non-subscription auth).",
+      updatedAt: now,
     }
   }
 
@@ -209,8 +210,9 @@ export function normalizeClaudeUsage(
     windows,
     credits,
     detail: windows.length > 0 || credits ? null : "No plan limit windows reported.",
+    updatedAt: windows.length > 0 || credits ? null : now,
   }
-  snapshot.updatedAt = latestRecordedAt(snapshot)
+  snapshot.updatedAt = latestRecordedAt(snapshot) ?? snapshot.updatedAt
   return snapshot
 }
 
@@ -275,7 +277,7 @@ export function mergeClaudeRateLimitPush(
     windows,
     detail: null,
   }
-  snapshot.updatedAt = latestRecordedAt(snapshot)
+  snapshot.updatedAt = latestRecordedAt(snapshot) ?? snapshot.updatedAt
   return snapshot
 }
 
@@ -326,7 +328,7 @@ export function normalizeCodexRateLimits(
   }
 
   if (!raw) {
-    return { ...base, status: "unavailable", detail: "Could not read Codex usage." }
+    return { ...base, status: "unavailable", detail: "Could not read Codex usage.", updatedAt: now }
   }
 
   const buckets = raw.rateLimitsByLimitId && Object.keys(raw.rateLimitsByLimitId).length > 0
@@ -335,7 +337,7 @@ export function normalizeCodexRateLimits(
       ? [[raw.rateLimits.limitId ?? "codex", raw.rateLimits] as [string, CodexRateLimitSnapshotRaw]]
       : []
 
-  // The default "codex" (All models) bucket always renders first; named
+  // The default "codex" (general quota) bucket always renders first; named
   // model-specific lanes (e.g. Spark) follow. Object key order isn't
   // guaranteed and turn-push merges can reorder, so pin it explicitly.
   buckets.sort(([a], [b]) => {
@@ -349,6 +351,7 @@ export function normalizeCodexRateLimits(
       ...base,
       status: "unavailable",
       detail: "No rate-limit windows reported (sign in to Codex with a ChatGPT plan).",
+      updatedAt: now,
     }
   }
 
@@ -359,17 +362,16 @@ export function normalizeCodexRateLimits(
 
   for (const [limitId, bucket] of buckets) {
     plan = plan ?? bucket.planType ?? null
-    // The default bucket ("codex") has no limitName; named buckets are
-    // model-specific lanes whose limitName is a model id — run it through the
-    // shared model-label formatter so "GPT-5.3-Codex-Spark" → "GPT 5.3 Codex
-    // Spark", matching the rest of the app.
-    const suffix = !multiple
-      ? ""
-      : bucket.limitName
-        ? deriveModelLabel(bucket.limitName)
-        : limitId === "codex"
-          ? "All models"
-          : limitId
+    // A named limit is a model-specific quota lane, not the model currently
+    // selected in settings. Keep that distinction in the canonical label so
+    // clients cannot accidentally present it as the active model.
+    const suffix = bucket.limitName
+      ? `Model quota · ${deriveModelLabel(bucket.limitName)}`
+      : multiple && limitId === "codex"
+        ? "General quota"
+        : multiple
+          ? `Model quota · ${limitId}`
+          : ""
     windows.push(...codexBucketWindows(bucket, limitId, now, source, suffix))
     if (!credits && bucket.credits && (bucket.credits.hasCredits || bucket.credits.unlimited)) {
       credits = {
@@ -394,8 +396,9 @@ export function normalizeCodexRateLimits(
     windows,
     credits,
     detail: windows.length > 0 ? null : "No rate-limit windows reported.",
+    updatedAt: windows.length > 0 ? null : now,
   }
-  snapshot.updatedAt = latestRecordedAt(snapshot)
+  snapshot.updatedAt = latestRecordedAt(snapshot) ?? snapshot.updatedAt
   return snapshot
 }
 
@@ -423,7 +426,7 @@ export function mergeCodexRateLimitPush(
     credits: fresh.credits ?? prev.credits,
     detail: null,
   }
-  snapshot.updatedAt = latestRecordedAt(snapshot)
+  snapshot.updatedAt = latestRecordedAt(snapshot) ?? snapshot.updatedAt
   return snapshot
 }
 
@@ -471,7 +474,7 @@ export function normalizeDeepSeekBalance(
   }
 
   if (!raw) {
-    return { ...base, status: "unavailable", detail: "Could not read DeepSeek balance." }
+    return { ...base, status: "unavailable", detail: "Could not read DeepSeek balance.", updatedAt: now }
   }
 
   if (!raw.available) {
@@ -483,7 +486,7 @@ export function normalizeDeepSeekBalance(
           : raw.error === "request_failed"
             ? "DeepSeek 余额接口请求失败，请稍后重试。"
             : "DeepSeek 账户余额不可用。"
-    return { ...base, status: "unavailable", detail: reason }
+    return { ...base, status: "unavailable", detail: reason, updatedAt: raw.fetchedAt || now }
   }
 
   const snapshot: ProviderUsageSnapshot = {
@@ -633,21 +636,29 @@ export class UsageLimitsManager {
    * usage-limits subscription) are throttled to once per TTL — the explicit
    * Refresh button passes force.
    */
-  async refresh(options: { force?: boolean } = {}): Promise<void> {
+  async refresh(options: { force?: boolean; provider?: AgentProvider } = {}): Promise<void> {
     if (this.refreshInFlight) return this.refreshInFlight
     if (!options.force && this.lastRefreshAt !== null) {
       const age = (this.deps.now?.() ?? new Date()).getTime() - this.lastRefreshAt
       if (age < REFRESH_TTL_MS) return
     }
-    this.refreshInFlight = this.doRefresh().finally(() => {
+    this.refreshInFlight = this.doRefresh(options.provider).finally(() => {
       this.refreshInFlight = null
     })
     return this.refreshInFlight
   }
 
-  private async doRefresh() {
-    await Promise.all([this.refreshClaude(), this.refreshCodex(), this.refreshDeepSeek()])
-    this.lastRefreshAt = (this.deps.now?.() ?? new Date()).getTime()
+  private async doRefresh(provider?: AgentProvider) {
+    if (provider === "claude") {
+      await this.refreshClaude()
+    } else if (provider === "codex") {
+      await this.refreshCodex()
+    } else if (provider === "deepseek") {
+      await this.refreshDeepSeek()
+    } else if (!provider) {
+      await Promise.all([this.refreshClaude(), this.refreshCodex(), this.refreshDeepSeek()])
+      this.lastRefreshAt = (this.deps.now?.() ?? new Date()).getTime()
+    }
     // Make refresh() a durable point: the persisted cache reflects this read.
     await this.persistChain
   }
@@ -661,7 +672,12 @@ export class UsageLimitsManager {
   private applyRefreshed(provider: AgentProvider, fresh: ProviderUsageSnapshot) {
     const prev = this.snapshots.get(provider)
     if (fresh.status !== "ok" && prev && prev.windows.length > 0) {
-      this.setProvider(provider, { ...prev, detail: fresh.detail })
+      this.setProvider(provider, {
+        ...prev,
+        status: fresh.status,
+        detail: fresh.detail,
+        updatedAt: fresh.updatedAt ?? prev.updatedAt,
+      })
       return
     }
     this.setProvider(provider, fresh)
@@ -676,7 +692,7 @@ export class UsageLimitsManager {
       const detail = error instanceof Error ? error.message : String(error)
       this.applyRefreshed("claude", {
         provider: "claude", status: "unavailable", plan: null, windows: [], credits: null,
-        detail: `Failed to read Claude usage: ${detail}`, updatedAt: null,
+        detail: `Failed to read Claude usage: ${detail}`, updatedAt: this.nowIso(),
       })
     }
   }
@@ -694,7 +710,7 @@ export class UsageLimitsManager {
         detail: isAuth
           ? "Sign in to Codex with a ChatGPT plan to see limits (API-key auth has no limits)."
           : `Failed to read Codex usage: ${message}`,
-        updatedAt: null,
+        updatedAt: this.nowIso(),
       })
     }
   }
@@ -708,7 +724,7 @@ export class UsageLimitsManager {
       const detail = error instanceof Error ? error.message : String(error)
       this.applyRefreshed("deepseek", {
         provider: "deepseek", status: "unavailable", plan: null, windows: [], credits: null,
-        detail: `Failed to read DeepSeek balance: ${detail}`, updatedAt: null,
+        detail: `Failed to read DeepSeek balance: ${detail}`, updatedAt: this.nowIso(),
       })
     }
   }

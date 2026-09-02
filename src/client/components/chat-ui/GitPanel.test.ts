@@ -270,7 +270,7 @@ describe("GitPanel", () => {
       })
     ))
 
-    expect(markup).toContain("Push to GitHub")
+    expect(markup).toContain("推送到 GitHub")
     expect(markup).not.toContain("PR")
   })
 
@@ -313,7 +313,7 @@ describe("GitPanel", () => {
       })
     ))
 
-    expect(markup).toContain("Fetch")
+    expect(markup).toContain("拉取更新")
     expect(markup).toContain("PR")
   })
 

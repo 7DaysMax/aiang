@@ -5,6 +5,8 @@ import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, Dia
 import type { ChatDockMetrics } from "../../lib/contextWindow"
 import { formatContextWindowTokens } from "../../lib/contextWindow"
 import { VIRTUAL_COMMANDS } from "../../lib/virtualCommands"
+import SearchList from "@/components/primitives/SearchList"
+import { insertComposerText } from "../../lib/composerInsert"
 
 export type VirtualCommandDialogMode = "commands" | "usage"
 
@@ -88,12 +90,16 @@ export function VirtualCommandDialog({
               />
             </>
           ) : (
-            VIRTUAL_COMMANDS.map((command) => (
-              <div key={command.name} className="flex items-baseline gap-2 rounded-lg border border-border px-3 py-2">
-                <span className="shrink-0 font-mono text-[13px]">/{command.name}</span>
-                <span className="min-w-0 text-sm text-muted-foreground">{command.description}</span>
-              </div>
-            ))
+            <SearchList
+              className="min-h-0 max-w-none"
+              items={VIRTUAL_COMMANDS.map((command) => ({ id: command.name, label: `/${command.name}`, description: command.description }))}
+              labels={{ placeholder: "搜索命令…", ariaLabel: "搜索命令", emptyTitle: "没有匹配命令", emptyHint: "换个关键词试试" }}
+              onSelect={(item) => {
+                if (typeof item === "string") return
+                insertComposerText(`${item.label} `, { replace: true })
+                onOpenChange(false)
+              }}
+            />
           )}
         </DialogBody>
       </DialogContent>

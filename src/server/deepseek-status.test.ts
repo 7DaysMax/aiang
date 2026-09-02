@@ -68,6 +68,25 @@ describe("parseDeepSeekStatusHtml", () => {
     expect(snapshot.components).toEqual([])
     expect(snapshot.incidents).toEqual([])
   })
+
+  test("未绑定组件的全局维护不会被误报为运行正常", () => {
+    const maintenance = JSON.stringify({
+      change_id: 1,
+      type: "maintenance",
+      title: "Global maintenance",
+      status: "scheduled",
+      affected_components: [],
+    }).replaceAll('"', '\\"')
+    const html = FIXTURE.replace(
+      'active_changes\\":[]',
+      `active_changes\\":[${maintenance}]`,
+    )
+
+    const snapshot = parseDeepSeekStatusHtml(html, 1_786_070_000_000)
+    expect(snapshot.activeChanges).toBe(1)
+    expect(snapshot.overallStatus).toBe("maintenance")
+    expect(snapshot.components.every((component) => component.status === "operational")).toBe(true)
+  })
 })
 
 describe("fetchDeepSeekStatus", () => {

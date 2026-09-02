@@ -22,9 +22,14 @@ export function parseCollaborationVerdict(entries: TranscriptEntry[]): { pass: b
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]
     if (!entry || entry.hidden) continue
-    if (entry.kind === "assistant_text" && typeof entry.text === "string" && entry.text.trim()) {
-      texts.unshift(entry.text.trim())
-      if (texts.join("\n").length > 4000) break
+    if (entry.kind === "assistant_text") {
+      if (typeof entry.text === "string" && entry.text.trim()) {
+        texts.unshift(entry.text.trim())
+        if (texts.join("\n").length > 4000) break
+      }
+      // Codex commonly emits the separator after PASS/FAIL as its own
+      // whitespace-only delta. It is still part of the same assistant stream;
+      // treating it as a boundary drops the verdict token that precedes it.
       continue
     }
     if (entry.kind === "thinking") continue
@@ -40,12 +45,20 @@ export function parseCollaborationVerdict(entries: TranscriptEntry[]): { pass: b
     break
   }
   const summary = texts.join("\n\n").trim()
-  const lines = summary.split(/\r?\n/)
-  const verdictLine = lines.find((line) => /^\s*(PASS|FAIL)\b/i.test(line))
-    ?? lines.find((line) => line.trim())
-    ?? ""
-  const pass = /^\s*PASS\b/i.test(verdictLine)
-  return { pass, summary: summary || verdictLine || "（验收没有写出结论）" }
+  if (!summary) {
+    // 验收回合没有产出任何文本（只输出了 thinking，或流被中断）：
+    // 没有意见 = 没有发现必须改的问题，视为通过；占位文案不能当 FAIL
+    // 意见发给实现者（否则「按意见再改」会把无意义内容当任务继续做）。
+    return { pass: true, summary: "（验收没有写出结论，视为通过）" }
+  }
+  // 流式输出把同一段文本拆成多个 assistant_text 增量条目（每个一小段），
+  // "PASS" 会被拆成 "P" + "ASS" 落在不同 entry，join 后是 "P\n\nASS"，
+  // 逐行匹配就丢了。把块内换行压平（"P ASS"）再从开头判定结论：
+  // "P ASS" 压平后是 "P ASS"，去掉空格就是 "PASS"。summary 保留原始
+  // 换行用于展示。
+  const compact = summary.replace(/\s+/g, "")
+  const pass = /^PASS/i.test(compact)
+  return { pass, summary }
 }
 
 export function buildCollaborationRetryPrompt(summary: string): string {

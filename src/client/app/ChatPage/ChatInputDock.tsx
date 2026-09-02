@@ -8,6 +8,7 @@ import { DEEPSEEK_STATUS_REFRESH_MS, useDeepSeekStatusStore } from "../../stores
 import type { KannaState } from "../useKannaState"
 import type { AgentProvider, ChatSkillsSnapshot } from "../../../shared/types"
 import type { VirtualCommand } from "../../lib/virtualCommands"
+import { ChatSurface } from "@/components/primitives/ChatComposer"
 
 interface ChatInputDockProps {
   inputRef: RefObject<HTMLDivElement | null>
@@ -110,7 +111,7 @@ export const ChatInputDock = memo(function ChatInputDock({
             stays full width so the composer inside it remains centred on the
             card, not on the card minus the gutter. */}
         <div className="absolute inset-y-0 left-0 right-[var(--transcript-scrollbar-w,0px)] bg-gradient-to-t from-background via-background to-background/10 md:to-background/0 pointer-events-none" />
-        <div className="relative">
+        <ChatSurface className="relative">
           <ChatInput
             ref={chatInputRef}
             inputElementRef={chatInputElementRef}
@@ -132,7 +133,7 @@ export const ChatInputDock = memo(function ChatInputDock({
             onListSkills={onListSkills}
             onVirtualCommand={onVirtualCommand}
           />
-          {anyMetricVisible ? (
+          {anyMetricVisible && !canCancel ? (
             <DockMetricsBar
               serviceStatus={serviceStatus}
               serviceStatusFailed={serviceStatusFailed}
@@ -146,7 +147,7 @@ export const ChatInputDock = memo(function ChatInputDock({
               }}
             />
           ) : null}
-        </div>
+        </ChatSurface>
       </div>
     </div>
   )

@@ -16,7 +16,7 @@ function fakeAgent(): Agent {
         tools: { builtin: [], mcpServers: [] },
       },
     },
-  } as Agent
+  } as unknown as Agent
 }
 
 function writeInstalledPlugin(home: string) {
